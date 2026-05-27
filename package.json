@@ -1,12 +1,14 @@
 {
-  "name": "@ykstorm/guardrail-proxy",
+  "name": "@ykstorm/tripwire",
   "version": "1.0.0",
   "description": "LLM response guardrails — real-time streaming safety + post-hoc audit for AI chatbots",
-  "license": "MIT",
-  "repository": "github:ykstorm/guardrail-proxy",
+  "license": "Apache-2.0",
+  "repository": "github:ykstorm/tripwire",
+  "homepage": "https://tripwire.lakshyaraj.dev",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "keywords": ["llm","safety","guardrails","streaming","openai","anthropic","ai","moderation"],
   "exports": {
     ".": {
       "import": "./dist/index.mjs",
@@ -22,7 +24,8 @@
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
     "test": "vitest",
     "lint": "eslint src --ext .ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "daemon": "node dist/daemon.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
