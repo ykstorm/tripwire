@@ -4,7 +4,6 @@
 // All Sentry calls are wrapped in try/catch so this works in any environment.
 
 import {
-  CONTACT_LEAK_PATTERN,
   BUSINESS_LEAK_PATTERN,
   MARKDOWN_PATTERN,
   PLACEHOLDER_NAME_PATTERN,
@@ -146,11 +145,12 @@ function checkCardDiscipline(cards: ParsedCard[]): string[] {
     }
   }
 
-  const specialtyCount =
+  const _specialtyCount =
     ((counts['comparison'] ?? 0) > 0 ? 1 : 0) +
     ((counts['cost_breakdown'] ?? 0) > 0 ? 1 : 0) +
     ((counts['visit_prompt'] ?? 0) > 0 ? 1 : 0) +
     ((counts['builder_trust'] ?? 0) > 0 ? 1 : 0)
+  void _specialtyCount // TODO: wire into card diversity scoring
 
   if ((counts['comparison'] ?? 0) > 0 && (counts['project_card'] ?? 0) > 0) {
     violations.push('CARD_DISCIPLINE: comparison must stand alone (no project_card alongside)')

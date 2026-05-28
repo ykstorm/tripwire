@@ -1,0 +1,47 @@
+# Tripwire — local stack for trying the daemon mode.
+# docker compose up -d
+# curl localhost:8080/healthz
+# Use the OpenAI client of your choice with base_url=http://localhost:8080/v1
+
+services:
+
+  tripwire:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tripwire-daemon
+    environment:
+      # Upstream LLM provider — Tripwire is provider-agnostic
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+
+      # Tripwire config
+      TRIPWIRE_DEFAULT_ABORT_RULES: "CONTACT_LEAK,BUSINESS_LEAK,INVESTMENT_GUARANTEE,OTP_FABRICATION,FABRICATED_ENTITY"
+      TRIPWIRE_DEFAULT_OBSERVE_RULES: "HALLUCINATION,LANGUAGE_MISMATCH,WORD_CAP"
+      TRIPWIRE_LOG_LEVEL: "info"
+
+      # Optional observability
+      SENTRY_DSN: "${SENTRY_DSN:-}"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 20s
+      timeout: 3s
+      retries: 3
+      start_period: 8s
+    restart: unless-stopped
+
+  # Optional example client — a tiny Next.js page that demonstrates the abort UX
+  demo:
+    profiles: ["demo"]   # docker compose --profile demo up
+    image: ghcr.io/ykstorm/tripwire-demo:latest
+    container_name: tripwire-demo
+    environment:
+      OPENAI_BASE_URL: "http://tripwire:8080/v1"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+    ports:
+      - "3000:3000"
+    depends_on:
+      tripwire:
+        condition: service_healthy

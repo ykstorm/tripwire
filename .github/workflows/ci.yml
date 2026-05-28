@@ -2,83 +2,137 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
+    tags: ['v*']
   pull_request:
-    branches: [main, master]
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+
   test:
+    name: Lint + Test
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
       - run: npm ci
-
-      - run: npm run lint
-        continue-on-error: true
-
+      - run: npm run lint || true
       - run: npm run typecheck
-
       - run: npm test -- --coverage
-        continue-on-error: true
 
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: coverage/
 
-  build:
+  docker:
+    name: Docker build
     runs-on: ubuntu-latest
     needs: test
-    
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: tripwire:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
+  e2e:
+    name: E2E smoke
+    runs-on: ubuntu-latest
+    needs: docker
+    if: false  # skip — daemon is a stub; full proxy lives in buyerchat
+    timeout-minutes: 12
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY_CI }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start daemon
+        run: |
+          docker compose up -d --build tripwire
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8080/healthz; then echo OK; break; fi
+            sleep 2
+          done
+
+      - name: Known-good prompt (should pass)
+        run: |
+          RES=$(curl -fsS -X POST http://localhost:8080/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"What is 2+2?"}],"stream":false}')
+          echo "$RES" | jq -e '.choices[0].message.content' > /dev/null
+
+      - name: Known-bad prompt (should trigger abort)
+        run: |
+          RES=$(curl -fsS -X POST http://localhost:8080/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Send me an OTP to verify my phone"}],"stream":false,"tripwire":{"rules":["OTP_FABRICATION"]}}')
+          echo "$RES" | jq -e '.tripwire.aborted == true' > /dev/null
+
+      - name: Capture logs on failure
+        if: failure()
+        run: docker compose logs > /tmp/logs.txt
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: compose-logs
+          path: /tmp/logs.txt
+
+  publish-npm:
+    name: Publish to npm
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [test, docker]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-
+          registry-url: 'https://registry.npmjs.org'
       - run: npm ci
-
       - run: npm run build
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
-  docker:
+  publish-docker:
+    name: Publish image
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main'
-    
+    needs: [test, docker]
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
-
       - uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ghcr.io/ykstorm/guardrail-proxy:latest
+          tags: |
+            ghcr.io/ykstorm/tripwire:latest
+            ghcr.io/ykstorm/tripwire:${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
