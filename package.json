@@ -8,7 +8,16 @@
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
-  "keywords": ["llm","safety","guardrails","streaming","openai","anthropic","ai","moderation"],
+  "keywords": [
+    "llm",
+    "safety",
+    "guardrails",
+    "streaming",
+    "openai",
+    "anthropic",
+    "ai",
+    "moderation"
+  ],
   "exports": {
     ".": {
       "import": "./dist/index.mjs",
@@ -29,6 +38,9 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.60.0",
+    "@typescript-eslint/parser": "^8.60.0",
+    "@vitest/coverage-v8": "^1.6.1",
     "eslint": "^8.57.0",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",

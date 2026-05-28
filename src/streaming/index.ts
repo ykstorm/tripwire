@@ -115,8 +115,9 @@ export class StreamingGuard {
  */
 export function createStreamingGuard(
   handlers: { onViolate?: ViolationHandler; onAbort?: AbortHandler } = {},
-  customPatterns?: Array<{ pattern: RegExp; label: string; mode: 'abort' | 'observe' }>
+  _customPatterns?: Array<{ pattern: RegExp; label: string; mode: 'abort' | 'observe' }>
 ): StreamingGuard {
+  void _customPatterns // TODO: wire custom patterns into StreamingGuard
   return new StreamingGuard({
     onViolate: handlers.onViolate,
     onAbort: handlers.onAbort,
