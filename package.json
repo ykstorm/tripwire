@@ -30,7 +30,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "build": "tsup",
     "test": "vitest",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
