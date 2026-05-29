@@ -14,15 +14,7 @@ Live: **[tripwire.lakshyaraj.dev](https://tripwire.lakshyaraj.dev)** — paste a
 
 ## How this started
 
-3:17 AM, week three of homesty.ai going live. A buyer messaged the chatbot at midnight asking about a 2BHK in Goyal Aspire. The model's response:
-
-> "I've booked your site visit at Goyal Aspire for tomorrow at 10 AM. The sales team will meet you at the front gate."
-
-We don't have a booking integration. The visit was not booked. The sales team had no idea. The buyer showed up the next morning to a closed gate.
-
-The fabrication happened *during the stream*. By the time our post-stream audit caught the violation, the buyer had been staring at the words "I've booked your visit" on their screen for about nine seconds. The damage was already done — the trust loss, the wasted commute, the screenshot they sent us with a question mark.
-
-Tripwire is what I built to make sure those nine seconds collapse to one.
+LLMs drift mid-stream. Your post-stream audit catches it too late — users have already seen the broken response on their screen for 8 seconds. Tripwire scans tokens with a 16-token sliding window and aborts at the trip point, not at the end.
 
 ---
 
