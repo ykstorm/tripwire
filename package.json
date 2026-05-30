@@ -4,7 +4,7 @@
   "description": "LLM response guardrails — real-time streaming safety + post-hoc audit for AI chatbots",
   "license": "Apache-2.0",
   "repository": "github:ykstorm/tripwire",
-  "homepage": "https://tripwire.lakshyaraj.dev",
+  "homepage": "https://github.com/ykstorm/tripwire",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",

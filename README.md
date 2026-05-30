@@ -2,13 +2,11 @@
 
 **Mid-stream LLM safety. Catch the lie before the user finishes reading it.**
 
-[![npm](https://img.shields.io/npm/v/@ykstorm/tripwire?label=npm)](https://npmjs.com/package/@ykstorm/tripwire)
+![npm](https://img.shields.io/npm/v/@ykstormsorg/tripwire.svg)
 [![CI](https://github.com/ykstorm/tripwire/actions/workflows/ci.yml/badge.svg)](https://github.com/ykstorm/tripwire/actions/workflows/ci.yml)
-[![Docker](https://img.shields.io/docker/v/ykstorm/tripwire?label=docker)](https://hub.docker.com/r/ykstorm/tripwire)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Live](https://img.shields.io/badge/demo-tripwire.lakshyaraj.dev-1a73e8)](https://tripwire.lakshyaraj.dev)
 
-Live: **[tripwire.lakshyaraj.dev](https://tripwire.lakshyaraj.dev)** — paste a prompt, watch a real abort happen mid-stream.
+Live demo coming soon. Run locally:
 
 ---
 
