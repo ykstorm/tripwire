@@ -1,6 +1,6 @@
 {
-  "name": "@ykstorm/tripwire",
-  "version": "1.0.0",
+  "name": "@ykstormsorg/tripwire",
+  "version": "1.0.1",
   "description": "LLM response guardrails — real-time streaming safety + post-hoc audit for AI chatbots",
   "license": "Apache-2.0",
   "repository": "github:ykstorm/tripwire",
@@ -48,5 +48,8 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
