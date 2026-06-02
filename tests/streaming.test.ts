@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { StreamingGuard } from '../src/streaming/index.js'
 
 describe('StreamingGuard', () => {
@@ -15,7 +15,7 @@ describe('StreamingGuard', () => {
         try {
           g.onChunk(chunk)
           delivered += chunk
-        } catch (_e) { break }
+        } catch { break }
       }
       expect(aborted).toBe(true)
       // Partial content delivered before abort
@@ -31,7 +31,7 @@ describe('StreamingGuard', () => {
         try {
           g.onChunk(chunk)
           delivered += chunk
-        } catch (_e) { break }
+        } catch { break }
       }
       expect(delivered).not.toContain('balvir@homesty.ai')
     })
@@ -43,7 +43,7 @@ describe('StreamingGuard', () => {
         try {
           g.onChunk(chunk)
           delivered += chunk
-        } catch (_e) { break }
+        } catch { break }
       }
       // Some content was delivered before abort
       expect(delivered.length).toBeGreaterThan(0)
@@ -52,7 +52,7 @@ describe('StreamingGuard', () => {
 
     it('resets and allows fresh stream after hard abort', () => {
       const g = new StreamingGuard({ onAbort: () => { throw new Error('ABORT') } })
-      try { g.onChunk('call 9988776655') } catch (_e) {}
+      try { g.onChunk('call 9988776655') } catch { /* expected abort */ }
       g.reset()
       let delivered = ''
       for (const chunk of ['Hello ', 'world']) {

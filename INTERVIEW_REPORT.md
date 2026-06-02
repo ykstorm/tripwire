@@ -1,8 +1,8 @@
-# guardrail-proxy — Interview Report
+# Tripwire — Interview Report
 
 ## What I built
 
-An npm package (`@ykstorm/guardrail-proxy`) for LLM response guardrails — real-time content safety for streaming AI outputs and post-hoc audit. The package provides two things: a `StreamingGuard` that watches an AI token stream and aborts mid-generation when it detects policy violations, and a `checkResponse` function that runs 23 CHECK cases on a complete response.
+An npm package (`@ykstormsorg/tripwire`) for LLM response guardrails — real-time content safety for streaming AI outputs and post-hoc audit. The package provides two things: a `StreamingGuard` that watches an AI token stream and aborts mid-generation when it detects policy violations, and a `checkResponse` function that runs 23 CHECK cases on a complete response.
 
 The package was extracted from buyerchat's LOCKS-1/LOCKS-2 production system. In buyerchat, the streaming guard fires every 16 tokens during GPT-4o generation. If it detects a phone number, an email, a price commitment, or a commission disclosure, it throws — the stream stops, but the user sees whatever was already delivered. No silence, no leaked data.
 
@@ -75,7 +75,7 @@ The regex patterns were tuned over time. The COMMISSION_PATTERN, for example, ha
 - 16-token sliding window checkpoint
 - <50ms guard overhead per chunk in production
 - 117 package tests, 830 buyerchat tests covering all CHECK cases
-- MIT license, published to npm (`@ykstorm/guardrail-proxy`)
+- MIT license, published to npm (`@ykstormsorg/tripwire`)
 
 ---
 
@@ -87,5 +87,5 @@ Be ready to explain:
 - How the 23 CHECK cases were derived (answer: business requirements from Homesty.ai, tuned over time with false positive monitoring)
 - Why partial delivery is architecturally guaranteed (answer: caller wraps stream in try/catch, accumulates delivered text, returns partial on abort)
 
-This project lives at: github.com/ykstorm/guardrail-proxy
-npm: @ykstorm/guardrail-proxy
+This project lives at: github.com/ykstorm/tripwire
+npm: @ykstormsorg/tripwire

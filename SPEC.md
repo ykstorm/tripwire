@@ -1,8 +1,8 @@
-# guardrail-proxy — Specification
+# Tripwire — Specification
 
 ## Overview
 
-**guardrail-proxy** is a TypeScript npm package for LLM response guardrails — real-time content safety for streaming AI outputs and post-hoc audit. It provides regex-based pattern detection for contact leaks, markdown, business-sensitive data, price/commitment leaks, commission leaks, hallucination detection, and status-transition validation.
+@ykstormsorg/tripwire is a TypeScript npm package for LLM response guardrails — real-time content safety for streaming AI outputs and post-hoc audit. It provides regex-based pattern detection for contact leaks, markdown, business-sensitive data, price/commitment leaks, commission leaks, hallucination detection, and status-transition validation.
 
 ## Features
 
@@ -11,7 +11,7 @@
 Run during token stream delivery. Supports **hard-abort** (throw to stop stream) and **soft-observe** (telemetry only) modes per pattern.
 
 ```ts
-import { createStreamingGuard } from '@ykstorm/guardrail-proxy'
+import { createStreamingGuard } from '@ykstormsorg/tripwire'
 
 const guard = createStreamingGuard({
   onAbort: (violation) => { throw new Error(violation) },
@@ -29,7 +29,7 @@ for (const token of stream) {
 Full response validation after stream completes. Returns `{ passed, violations[] }`.
 
 ```ts
-import { checkResponse } from '@ykstorm/guardrail-proxy'
+import { checkResponse } from '@ykstormsorg/tripwire'
 
 const result = checkResponse(aiText, {
   knownProjectNames: ['Arialife Heights', 'San Villa'],
@@ -45,7 +45,7 @@ if (!result.passed) {
 Pure functions for Builder/Project lock-state state machines. No DB needed.
 
 ```ts
-import { validateBuilderTransition, reasonRequired } from '@ykstorm/guardrail-proxy'
+import { validateBuilderTransition, reasonRequired } from '@ykstormsorg/tripwire'
 
 const err = validateBuilderTransition('REMOVED', 'BUILDER_HOLD')
 if (err) {
