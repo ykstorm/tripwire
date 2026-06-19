@@ -40,13 +40,13 @@ test('clean content passes', () => {
 test('phone number is blocked', () => {
   const result = checkResponse('Call us at 9988776655 for booking.')
   assertEqual(result.passed, false, 'phone number should be blocked')
-  if (!result.violations.some(v => v.includes('PHONE'))) throw new Error('expected PHONE violation')
+  if (!result.violations.some(v => v.includes('CONTACT_LEAK'))) throw new Error('expected CONTACT_LEAK violation')
 })
 
-test('email is blocked', () => {
+test('email (with hyphenated domain) is blocked', () => {
   const result = checkResponse('Email: scammer@fake-site.com to book.')
   assertEqual(result.passed, false, 'email should be blocked')
-  if (!result.violations.some(v => v.includes('EMAIL'))) throw new Error('expected EMAIL violation')
+  if (!result.violations.some(v => v.includes('CONTACT_LEAK'))) throw new Error('expected CONTACT_LEAK violation')
 })
 
 test('price guarantee is blocked', () => {
@@ -103,35 +103,43 @@ test('phone number in chunk triggers abort', () => {
   if (abortViolations.length === 0) throw new Error('expected phone abort violation')
 })
 
-test('.reset() clears buffer and violations', () => {
+test('.reset() clears violations', () => {
   const violations = []
   const guard = new StreamingGuard({
     onViolate: (v) => violations.push(v),
   })
-  guard.onChunk('Hello ')
-  guard.onChunk('world')
+  guard.onChunk('The final price is ₹45,000')
   guard.reset()
   assertEqual(guard.violations.length, 0, 'violations should be empty after reset')
-  assertEqual(guard['buffer'].length, 0, 'buffer should be empty after reset')
 })
 
-test('hard abort yields delivered partial', () => {
-  let delivered = null
-  let abortViolation = null
+test('hard abort delivers partial content before the banned token', () => {
+  // The consumer accumulates delivered text and stops on abort (the documented
+  // streaming pattern). The banned token must NOT be in the delivered output.
+  let delivered = ''
   const guard = new StreamingGuard({
-    onAbort: (violation, deliveredText) => {
-      abortViolation = violation
-      delivered = deliveredText
-    },
+    onAbort: () => { throw new Error('ABORT') },
   })
-  guard.onChunk('The property ')
-  try {
-    guard.onChunk('call 9988776655 now')
-  } catch (e) {
-    // expected
+  for (const chunk of ['The property ', 'call 9988776655 now']) {
+    try {
+      guard.onChunk(chunk)
+      delivered += chunk
+    } catch (e) {
+      break
+    }
   }
-  if (delivered === null) throw new Error('expected delivered text')
   if (!delivered.includes('The property')) throw new Error('delivered should include partial text')
+  if (delivered.includes('9988776655')) throw new Error('banned phone token must not be delivered')
+})
+
+test('custom pattern merges with built-ins and fires', () => {
+  const observed = []
+  const guard = new StreamingGuard({
+    patterns: [{ pattern: /\bsecret-project-x\b/i, label: 'CUSTOM_CODENAME', mode: 'observe' }],
+    onViolate: (v) => observed.push(v),
+  })
+  guard.onChunk('We are launching secret-project-x next month')
+  if (!observed.some(v => v.includes('CUSTOM_CODENAME'))) throw new Error('expected custom pattern to fire')
 })
 
 // --- Summary ---

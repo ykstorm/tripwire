@@ -213,7 +213,7 @@ export function checkResponse(text: string, opts: CheckOptions = {}): CheckResul
   if (/\d{10}|\+91\s?\d{10}|\d{3}[-\s]\d{3}[-\s]\d{4}/.test(text)) {
     violations.push('CONTACT_LEAK: phone number pattern detected — CRITICAL')
   }
-  if (/@[a-zA-Z0-9]+\.[a-zA-Z]{2,}/.test(text)) {
+  if (/@[a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,}/.test(text)) {
     violations.push('CONTACT_LEAK: email address pattern detected — CRITICAL')
   }
 
@@ -225,6 +225,14 @@ export function checkResponse(text: string, opts: CheckOptions = {}): CheckResul
   // CHECK 4 — Investment guarantee
   if (GUARANTEE_WORDS.some(w => lower.includes(w))) {
     violations.push('INVESTMENT_GUARANTEE: unqualified financial promise in response')
+  }
+
+  // CHECK 4a — Price guarantee: model promising a specific/exact price.
+  // e.g. "we guarantee this will cost exactly ₹50 lakhs" / "price guaranteed at …"
+  const PRICE_GUARANTEE_PATTERN =
+    /\b(guarantee|guaranteed|promise|assured?)\b[^.]*?(price|cost|₹|rs\.?|rupees|lakh|crore|\bL\b|\bCr\b)|\b(price|cost)\b[^.]*?\bguarantee/i
+  if (PRICE_GUARANTEE_PATTERN.test(text)) {
+    violations.push('PRICE_GUARANTEE: model guaranteed a specific price/cost (not authorized)')
   }
 
   // CHECK 4b — Persona-aware guarantee
@@ -259,6 +267,10 @@ export function checkResponse(text: string, opts: CheckOptions = {}): CheckResul
   }
 
   // CHECK 8 — Language match
+  // Indic scripts: Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil,
+  // Telugu, Kannada, Malayalam. If the buyer wrote in any of these and the
+  // response is plain Latin (English), that is a language mismatch.
+  const INDIC_SCRIPT = /[ऀ-෿]/
   if (buyerMessage) {
     const buyerDensity = hinglishDensity(buyerMessage)
     const responseDensity = hinglishDensity(text)
@@ -267,9 +279,13 @@ export function checkResponse(text: string, opts: CheckOptions = {}): CheckResul
         `LANGUAGE_MISMATCH: buyer wrote Hinglish (density ${(buyerDensity * 100).toFixed(0)}%) ` +
         `but response dropped to English (density ${(responseDensity * 100).toFixed(0)}%)`
       )
+    } else if (INDIC_SCRIPT.test(buyerMessage) && !INDIC_SCRIPT.test(text)) {
+      violations.push(
+        'LANGUAGE_MISMATCH: buyer wrote in a non-Latin Indic script but response is plain English'
+      )
     }
   }
-  const buyerHasNonLatin = !!buyerMessage && /[ऀ-ॿ઀-૿]/.test(buyerMessage)
+  const buyerHasNonLatin = !!buyerMessage && INDIC_SCRIPT.test(buyerMessage)
   if (!buyerHasNonLatin && /[ऀ-ॿ઀-૿]/.test(text)) {
     violations.push('NON_LATIN_SCRIPT: response contains Devanagari / Gujarati characters with no buyer cue')
   }

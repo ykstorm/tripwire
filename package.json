@@ -31,17 +31,26 @@
   ],
   "scripts": {
     "build": "tsup",
-    "test": "vitest",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
-    "daemon": "node dist/daemon.js"
+    "daemon": "node dist/daemon.js",
+    "proxy": "node dist/bin/tripwire-proxy.js",
+    "smoke": "node scripts/smoke-test.js"
+  },
+  "bin": {
+    "tripwire-proxy": "dist/bin/tripwire-proxy.js"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^25.9.3",
+    "@types/supertest": "^7.2.0",
     "@typescript-eslint/eslint-plugin": "^8.60.0",
     "@typescript-eslint/parser": "^8.60.0",
     "@vitest/coverage-v8": "^1.6.1",
     "eslint": "^8.57.0",
+    "supertest": "^7.2.2",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.1"
@@ -51,5 +60,9 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "openai": "^6.44.0"
   }
 }

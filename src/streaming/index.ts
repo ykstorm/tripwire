@@ -19,14 +19,37 @@ import {
   COMMISSION_PATTERN,
 } from '../patterns/index.js'
 
+/**
+ * Soft-observe handler.
+ * @param violation human-readable description of what fired
+ * @param pattern   the label of the pattern that fired
+ */
 export type ViolationHandler = (violation: string, pattern: string) => void
+/**
+ * Hard-abort handler. Should throw to stop the stream.
+ * @param violation human-readable description of what fired
+ * @param pattern   the label of the pattern that fired
+ */
 export type AbortHandler = (violation: string, pattern: string) => never
+
+/** A user-supplied custom pattern entry. */
+export interface CustomPattern {
+  pattern: RegExp
+  label: string
+  mode: 'abort' | 'observe'
+}
 
 export interface StreamingGuardOptions {
   /** Called (non-blocking) when a soft-observe pattern fires. Default: no-op. */
   onViolate?: ViolationHandler
   /** Called when a hard-abort pattern fires — should throw. Default: throws. */
   onAbort?: AbortHandler
+  /**
+   * Custom patterns to MERGE with the built-in pattern set. They run after the
+   * built-ins, so a built-in abort still takes priority, but any custom pattern
+   * (abort or observe) fires for real — not a no-op.
+   */
+  patterns?: CustomPattern[]
   /**
    * Token window size for partial-pattern matching across chunk boundaries.
    * The guard accumulates up to `windowSize` tokens of text before running
@@ -72,6 +95,13 @@ export class StreamingGuard {
       { pattern: PLACEHOLDER_PRICE_PATTERN, label: 'PLACEHOLDER_LEAK', mode: 'observe' },
       { pattern: PLACEHOLDER_CUID_PATTERN, label: 'PLACEHOLDER_LEAK', mode: 'observe' },
     ]
+
+    // Merge user-supplied custom patterns. They run after the built-ins so a
+    // built-in hard-abort still wins on the same chunk, but custom patterns
+    // genuinely fire (this was previously a no-op TODO).
+    if (options.patterns?.length) {
+      this.patterns.push(...options.patterns)
+    }
   }
 
   /** Process a token chunk. Throws if any abort pattern fires. */
@@ -110,16 +140,14 @@ export class StreamingGuard {
 }
 
 /**
- * Factory to create a StreamingGuard with optional custom pattern list.
- * Custom patterns override defaults if they share the same label.
+ * Factory to create a StreamingGuard.
+ *
+ * Accepts a single options object (matching the README API): `onAbort`,
+ * `onViolate`, `patterns`, `windowSize`. Custom `patterns` are MERGED with the
+ * built-in pattern set and fire for real.
  */
 export function createStreamingGuard(
-  handlers: { onViolate?: ViolationHandler; onAbort?: AbortHandler } = {},
-  _customPatterns?: Array<{ pattern: RegExp; label: string; mode: 'abort' | 'observe' }>
+  options: StreamingGuardOptions = {}
 ): StreamingGuard {
-  void _customPatterns // TODO: wire custom patterns into StreamingGuard
-  return new StreamingGuard({
-    onViolate: handlers.onViolate,
-    onAbort: handlers.onAbort,
-  })
+  return new StreamingGuard(options)
 }
