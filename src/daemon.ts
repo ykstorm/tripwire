@@ -1,15 +1,16 @@
-import http from 'http';
+// Tripwire HTTP daemon — boots the OpenAI-compatible guarded proxy.
+//
+// Exposes:
+//   GET  /healthz                 → { ok: true, version }
+//   POST /v1/chat/completions     → guarded streaming proxy to OpenAI
+//
+// Config via env: PORT (default 8080).
 
-const server = http.createServer((_req, res) => {
-  if (_req.url === '/healthz') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, version: '1.0.0' }));
-  } else {
-    res.writeHead(404);
-    res.end();
-  }
-});
+import { createProxyServer } from './proxy/server.js'
 
-server.listen(8080, () => {
-  console.log('Daemon running on :8080');
-});
+const port = parseInt(process.env.PORT ?? '8080', 10)
+
+createProxyServer().listen(port, () => {
+  // eslint-disable-next-line no-console
+  console.log(`tripwire daemon listening on :${port}`)
+})

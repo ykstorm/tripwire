@@ -11,12 +11,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: ${{ matrix.node }}
           cache: 'npm'
 
       - run: npm ci
@@ -32,6 +37,23 @@ jobs:
 
       - run: npm run build
         name: Build
+
+      - run: npm run smoke
+        name: Smoke test (guard + custom patterns + checkResponse)
+
+      - name: Proxy boots and serves /healthz + 401 on missing auth
+        run: |
+          PORT=8099 node dist/daemon.js &
+          DAEMON_PID=$!
+          for i in $(seq 1 20); do
+            curl -fsS http://localhost:8099/healthz >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+          curl -fsS http://localhost:8099/healthz | grep '"ok":true'
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8099/v1/chat/completions \
+            -H 'Content-Type: application/json' -d '{"model":"gpt-4o-mini","stream":true,"messages":[]}')
+          test "$code" = "401"
+          kill $DAEMON_PID
 
   release:
     needs: test

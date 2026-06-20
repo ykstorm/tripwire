@@ -108,6 +108,45 @@ if (!result.passed) {
 }
 ```
 
+### Run as a sidecar proxy
+
+Tripwire ships an OpenAI-compatible proxy. It accepts requests in OpenAI's
+exact `/v1/chat/completions` shape, forwards them upstream using the caller's
+own Bearer token (no key management on the proxy), streams the response back as
+SSE, and **aborts mid-stream** the instant a hard rule fires.
+
+```bash
+# from a clone — build then run (defaults to :8080, override with PORT)
+npm install && npm run build
+npm run proxy            # or: node dist/daemon.js  /  npx tripwire-proxy
+
+# health
+curl http://localhost:8080/healthz
+# { "ok": true, "version": "1.0.1" }
+
+# stream a completion through the guard
+curl -N -X POST http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","stream":true,"messages":[{"role":"user","content":"Hello"}]}'
+```
+
+On a rule trip the proxy emits a final SSE event and closes the connection:
+
+```
+data: {"error":"rule_trip","violation":"CONTACT_LEAK: pattern matched in stream","rule":"CONTACT_LEAK","tokens_streamed":7}
+```
+
+Behavior:
+- `401` on missing/invalid `Authorization` header
+- `502` on upstream failure (bad key, network)
+- benign prompts stream through unchanged and end with `data: [DONE]`
+- soft-observe rules log a structured warning but never block the stream
+- extra abort/observe rules via `TRIPWIRE_CUSTOM_PATTERNS` (JSON array of
+  `{ "source", "flags", "label", "mode" }`)
+
+Run it as a container or Kubernetes sidecar — see [DEPLOY.md](./DEPLOY.md).
+
 ---
 
 ## API reference
@@ -198,10 +237,19 @@ src/
     index.ts          — StreamingGuard class + createStreamingGuard
   transitions/
     index.ts          — actions, nextBuilderStatus, nextProjectStatus, validate*Transition, reasonRequired
+  proxy/
+    server.ts         — Express app (createProxyServer)
+    handlers/chat.ts  — POST /v1/chat/completions guarded streaming handler
+    lib/sse.ts        — SSE framing helpers
+    lib/logging.ts    — structured per-request logging
   check.ts            — checkResponse (the main audit function)
+bin/
+  tripwire-proxy.ts   — CLI entrypoint for the proxy
 ```
 
-~762 LOC. No runtime dependencies.
+The core library (`patterns`, `streaming`, `transitions`, `check`) has **no
+runtime dependencies**. The optional sidecar proxy pulls in `express` and the
+`openai` SDK.
 
 ---
 
