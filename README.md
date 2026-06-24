@@ -217,12 +217,12 @@ if (reasonRequired('BUILDER_REMOVE')) {
 | `CONTACT_LEAK_PATTERN` | abort | Phone numbers and email addresses |
 | `BUSINESS_LEAK_PATTERN` | abort | Commission rate, partner status mentions |
 | `MARKDOWN_PATTERN` | observe | Bold `**`, headers `#`, bullets `-` |
-| `PLACEHOLDER_NAME_PATTERN` | abort | `[PROJECT_A]`, `[BUILDER_X]` tokens |
-| `PLACEHOLDER_PRICE_PATTERN` | abort | `₹X,XXX/sqft`, `₹X.X Cr` tokens |
-| `PLACEHOLDER_CUID_PATTERN` | abort | `[PROJECT_X_ID]` tokens |
-| `PRICE_DISCOUNT_COMMIT_PATTERN` | abort | `X% discount/off/kam` — Lock #1 |
-| `PRICE_FINAL_COMMIT_PATTERN` | abort | `final/exact/confirmed/locked + price` — Lock #1 |
-| `COMMISSION_PATTERN` | abort | `X% commission/brokerage` — Lock #2 |
+| `PLACEHOLDER_NAME_PATTERN` | observe | `[PROJECT_A]`, `[BUILDER_X]` tokens |
+| `PLACEHOLDER_PRICE_PATTERN` | observe | `₹X,XXX/sqft`, `₹X.X Cr` tokens |
+| `PLACEHOLDER_CUID_PATTERN` | observe | `[PROJECT_X_ID]` tokens |
+| `PRICE_DISCOUNT_COMMIT_PATTERN` | observe | `X% discount/off/kam` — Lock #1 |
+| `PRICE_FINAL_COMMIT_PATTERN` | observe | `final/exact/confirmed/locked + price` — Lock #1 |
+| `COMMISSION_PATTERN` | observe | `X% commission/brokerage` — Lock #2 |
 
 ---
 
