@@ -257,6 +257,26 @@ runtime dependencies**. The optional sidecar proxy pulls in `express` and the
 
 ---
 
+## Performance
+
+The guard runs on the hot path of every streamed token, so its overhead has to
+be negligible next to the network gap between tokens. Measured on the default
+rule set, streaming a realistic ~520-token response through a fresh guard:
+
+| Metric | Result |
+|---|---|
+| Per-chunk overhead (happy path) | **~3.5 µs** |
+| Throughput | **~290k chunks/sec** |
+| Sample | 10.4M chunks (20k streams × 521 tokens) |
+
+That is ~3.5 microseconds per token — roughly **5000× smaller** than the
+~15 ms a real provider takes between tokens, so the guard adds no perceptible
+latency. Reproduce with `node bench/per-chunk.mjs` (Node 24; pure CPU, no API
+key). The accumulation window is bounded, so cost stays flat regardless of
+response length.
+
+---
+
 ## Stack
 
 - **Runtime** — Node.js 18+
