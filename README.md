@@ -36,14 +36,18 @@ StreamingGuard  ──▶  Abort patterns (hard triggers)
 
 ## Features at a glance
 
-**Hard-abort patterns** (throw on match):
-- `{{PLACEHOLDER}}` vars — unfilled template variables
-- Business entity leaks — non-existent project/builder names
-- Contact info — emails, phone numbers in response
-- Price manipulation — fabricated discounts or commission claims
+**Hard-abort patterns** (throw, stop the stream mid-token on match):
+- Contact info — emails, phone numbers in the response (`CONTACT_LEAK`)
+- Business entity leaks — non-existent project / builder names (`BUSINESS_LEAK`)
 
-**Soft-observe patterns** (log only):
+**Soft-observe patterns** (log a structured warning, never block the stream):
+- `{{PLACEHOLDER}}` vars — unfilled template variables
+- Price manipulation — fabricated discounts or commission claims
 - Markdown artifacts — triple-backtick blocks in non-code context
+
+> Hard-abort is reserved for irreversible data leaks (real contact / business
+> data). Price and placeholder mentions are observe-only by default to avoid
+> false-positive stream kills; promote them with `TRIPWIRE_CUSTOM_PATTERNS`.
 
 ---
 
