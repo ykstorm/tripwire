@@ -3,6 +3,8 @@
 **Mid-stream LLM safety. Catch the lie before the user finishes reading it.**
 
 [![npm](https://img.shields.io/npm/v/@ykstormsorg/tripwire.svg)](https://www.npmjs.com/package/@ykstormsorg/tripwire)
+[![CI](https://github.com/ykstorm/tripwire/actions/workflows/ci.yml/badge.svg)](https://github.com/ykstorm/tripwire/actions/workflows/ci.yml)
+[![bench](https://github.com/ykstorm/tripwire/actions/workflows/benchmark.yml/badge.svg)](https://github.com/ykstorm/tripwire/actions/workflows/benchmark.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 A regex/policy guard that watches an LLM token stream and aborts the response the moment a rule trips. Post-hoc audit mode also available for batch reviews.
@@ -12,6 +14,12 @@ A regex/policy guard that watches an LLM token stream and aborts the response th
 ## The problem
 
 LLM streams are all-or-nothing — once you start yielding tokens, you're committed. A model that invents a non-existent project name, commits a fake discount, or leaks a placeholder like `{{PRICE}}` has already delivered the lie. Tripwire lets you stop it mid-sentence.
+
+---
+
+## Why this exists
+
+I extracted this pattern from [Homesty.ai](https://homesty.ai)'s production buyer chat, where a streamed response can carry a contact-info leak, a fabricated discount, or a project name that does not exist in the database. Post-hoc checking meant the violation was delivered, then noticed. Moving the check inside the stream — accumulated-text matching on every chunk, measured at ~4.7 µs per token in CI — converts "the violation got logged" into "the user never saw it". The two-tier split is the design core: hard-abort is reserved for irreversible data leaks, soft-observe covers everything whose false-positive cost exceeds its blast radius, and a pattern earns promotion from observe to abort only after its precision is measured.
 
 ---
 
