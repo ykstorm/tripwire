@@ -121,4 +121,40 @@ describe('StreamingGuard', () => {
       expect(g.violations.some(v => v.includes('PRICE'))).toBe(true)
     })
   })
+
+  describe('secret / credential leak (hard abort)', () => {
+    const abortGuard = () => new StreamingGuard({ onAbort: () => { throw new Error('ABORT') } })
+
+    const secrets: readonly [string, string][] = [
+      ['OpenAI key', 'sk-abcd1234efgh5678ijkl9012mnop'],
+      ['Anthropic key', 'sk-ant-api03-abcdefghij1234567890'],
+      ['AWS access key id', 'AKIAIOSFODNN7EXAMPLE'],
+      ['GitHub token', 'ghp_' + 'a'.repeat(36)],
+      ['Google API key', 'AIza' + 'B'.repeat(35)],
+      ['PEM private key header', '-----BEGIN RSA PRIVATE KEY-----'],
+    ]
+
+    for (const [name, secret] of secrets) {
+      it(`hard-aborts when a ${name} leaks mid-stream`, () => {
+        const g = abortGuard()
+        let delivered = ''
+        for (const chunk of ['here ', 'is ', 'the ', 'token: ', secret]) {
+          try { g.onChunk(chunk); delivered += chunk } catch { break }
+        }
+        // the credential itself never reaches the user
+        expect(delivered).not.toContain(secret)
+      })
+    }
+
+    it('does NOT false-positive on ordinary prose mentioning key/secret/bearer', () => {
+      const g = abortGuard()
+      let delivered = ''
+      const clean = 'Store your API key in a secret manager; the bearer of that message left.'
+      for (const word of clean.split(' ')) {
+        g.onChunk(word + ' ')
+        delivered += word + ' '
+      }
+      expect(delivered.trim()).toBe(clean)
+    })
+  })
 })

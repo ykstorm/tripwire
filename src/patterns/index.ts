@@ -6,6 +6,10 @@ export {
 } from './contact'
 
 export {
+  SECRET_LEAK_PATTERN,
+} from './secret'
+
+export {
   BUSINESS_LEAK_PATTERN,
 } from './business'
 

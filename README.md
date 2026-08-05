@@ -45,6 +45,7 @@ StreamingGuard  ──▶  Abort patterns (hard triggers)
 ## Features at a glance
 
 **Hard-abort patterns** (throw, stop the stream mid-token on match):
+- Secret leaks — API keys, access tokens, private keys the model must never echo (`SECRET_LEAK`)
 - Contact info — emails, phone numbers in the response (`CONTACT_LEAK`)
 - Business entity leaks — non-existent project / builder names (`BUSINESS_LEAK`)
 
@@ -222,6 +223,7 @@ if (reasonRequired('BUILDER_REMOVE')) {
 
 | Pattern | Type | Description |
 |---|---|---|
+| `SECRET_LEAK_PATTERN` | abort | Leaked API keys / tokens / private keys (OpenAI, Anthropic, AWS, GitHub, Google, Slack, PEM, long Bearer) |
 | `CONTACT_LEAK_PATTERN` | abort | Phone numbers and email addresses |
 | `BUSINESS_LEAK_PATTERN` | abort | Commission rate, partner status mentions |
 | `MARKDOWN_PATTERN` | observe | Bold `**`, headers `#`, bullets `-` |

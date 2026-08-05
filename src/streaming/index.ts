@@ -9,6 +9,7 @@
 
 import {
   CONTACT_LEAK_PATTERN,
+  SECRET_LEAK_PATTERN,
   BUSINESS_LEAK_PATTERN,
   MARKDOWN_PATTERN,
   PLACEHOLDER_NAME_PATTERN,
@@ -82,6 +83,7 @@ export class StreamingGuard {
     // All streaming patterns — order matters for abort priority
     this.patterns = [
       // Safety — hard abort
+      { pattern: SECRET_LEAK_PATTERN, label: 'SECRET_LEAK', mode: 'abort' },
       { pattern: CONTACT_LEAK_PATTERN, label: 'CONTACT_LEAK', mode: 'abort' },
       { pattern: BUSINESS_LEAK_PATTERN, label: 'BUSINESS_LEAK', mode: 'abort' },
       // Content quality — soft observe (LOCKS-1 observe-only per brief)
