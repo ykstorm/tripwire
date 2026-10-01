@@ -1,7 +1,7 @@
 {
   "name": "@ykstormsorg/tripwire",
   "version": "1.1.0",
-  "description": "LLM response guardrails — real-time streaming safety + post-hoc audit for AI chatbots",
+  "description": "Regex guardrails for streaming LLM output: abort on a rule match mid-stream, plus a post-hoc audit mode.",
   "license": "Apache-2.0",
   "repository": "github:ykstorm/tripwire",
   "homepage": "https://github.com/ykstorm/tripwire",

@@ -2,19 +2,17 @@
 
 ## Supported Versions
 
-| Version | Supported          |
+| Version | Supported |
 | ------- | ------------------ |
 | 1.x     | :white_check_mark: |
 | < 1.0   | :x:                |
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability, please report it by sending an email to the maintainers. Do not open a public issue.
+Please report security issues privately through GitHub's private vulnerability
+reporting: open the repository's **Security** tab and choose **Report a
+vulnerability**. Do not open a public issue.
 
-Please include:
-- Description of the vulnerability
-- Steps to reproduce
-- Potential impact
-- Any suggested fixes (optional)
-
-We will respond within 48 hours and work with you to address any confirmed vulnerabilities.
+Include a description, steps to reproduce, the potential impact, and any suggested
+fix. We aim to acknowledge reports within a few days and will coordinate a fix and
+disclosure with you.

@@ -1,7 +1,0 @@
-src/
-tests/
-tsconfig.json
-vitest.config.ts
-tsup.config.ts
-*.md
-.gitignore

@@ -1,6 +1,16 @@
-# Tripwire — Architecture
+# Tripwire - architecture
+
+Tripwire is a regex guard for streaming LLM output. It runs as a library at your
+call site and as an OpenAI-compatible proxy. This document describes what the
+code actually does; where a mechanism has a subtlety, the relevant source file is
+named.
 
 ## Why mid-stream
+
+A completion-time check is an audit, not a guard: by the time it runs, the tokens
+are already on the user's screen. Tripwire matches the accumulated stream on every
+chunk and can abort before the matched text is released, so the visible-bad-content
+window closes.
 
 ```mermaid
 sequenceDiagram
@@ -8,208 +18,99 @@ sequenceDiagram
     participant U as User
     participant T as Tripwire
     participant L as Upstream LLM
-
-    Note over U,L: Without Tripwire
-    U->>L: prompt
-    L-->>U: token "I" "have" "booked" "your" "site" "visit"...
-    Note over U: User has watched a fabricated booking claim for 4 seconds
-    L-->>U: stream ends
-    Note over U: Post-stream audit fires (too late)
-
-    Note over U,L: With Tripwire
     U->>T: prompt
     T->>L: prompt
-    L-->>T: token "I" "have" "booked"
-    Note over T: 16-token window matches FAKE_BOOKING_CLAIM
+    L-->>T: token "call " "98765" "43210"
+    Note over T: normalized buffer matches CONTACT_LEAK
     T->>L: abort upstream
-    T-->>U: [partial] "I have booked... [aborted: FAKE_BOOKING_CLAIM]"
-    Note over U: User sees a cut-off, not a 12-token lie
+    T-->>U: safe prefix only, then {"error":"rule_trip",...}
 ```
 
-The post-stream audit catches things, but only after the user has seen them. The visible-bad-content window is the actual security gap. Tripwire collapses that window.
+## The hold-back buffer
 
----
+`StreamingGuard` (`src/streaming/index.ts`) is the core. `onChunk(chunk)`:
 
-## 1. Library mode — call-site integration
+1. Appends the chunk to the raw buffer.
+2. Normalizes a trailing window (the new chunk plus a fixed overlap) and matches
+   every pattern against it. Normalization is skipped when the window is pure
+   ASCII, so the common path stays cheap.
+3. On a hard-abort match: latches `aborted`, calls `onAbort`, and throws
+   `GuardAbortError` (always, even if `onAbort` does not throw). Once latched,
+   every later `onChunk` throws without re-matching until `reset()`.
+4. On a soft-observe match: records the violation once per label and calls
+   `onViolate`; the stream continues.
+5. Returns the releasable text: everything except the last `holdback` characters
+   (default 48). `flush()` releases the held tail at the end, and returns nothing
+   once aborted (the held tail may precede the violation).
 
-```mermaid
-graph TB
-    AppCode[Your app code] --> Stream[for-await LLM stream]
-    Stream --> Guard[guard.onChunk]
-    Guard --> Buf[16-token buffer]
-    Buf --> Patterns[Pattern library<br/>23 classes]
-    Patterns --> Decision{Match?}
-    Decision -->|hard| Throw[throw Abort<br/>caller handles]
-    Decision -->|observe| Callback[onViolate callback<br/>caller continues]
-    Decision -->|none| Continue[continue]
+Because the scan window is bounded, per-chunk cost does not grow with response
+length. Because matching runs on normalized text, unicode evasions (zero-width
+splits, non-ASCII digits, dash look-alikes) are folded away first
+(`src/normalize.ts`).
 
-    Throw --> AppCode
-    Callback --> AppCode
-    Continue --> AppCode
+### Why the hold-back matters
 
-    classDef hard fill:#fee2e2,stroke:#dc2626
-    classDef obs fill:#fef3c7,stroke:#ca8a04
-    class Throw hard
-    class Callback obs
-```
+Without it, a violation split across chunks would have its safe-looking prefix
+released before the full pattern became visible. The hold-back is the cost of
+catching cross-chunk leaks: delivered output lags by the hold-back length.
 
-You own the streaming loop. Tripwire is a constraint, not a controller.
+## Post-hoc audit
 
-```ts
-const guard = new StreamingGuard({
-  abortOn: ['FABRICATED_ENTITY'],
-  onViolate: (v) => sentry.capture(v),
-})
+`checkResponse` (`src/check/`) runs the full pattern set plus the Homesty-specific
+rules (hallucination, card discipline, language match, price/commission locks)
+against a completed response and returns `{ passed, violations }` without
+throwing. It is a thin loop over a rule table: a context is built once
+(`src/check/shared.ts`) and each rule in `src/check/rules/` is a small pure
+function. It rejects input over `MAX_CHECK_CHARS` (100k) with `InputTooLargeError`.
 
-for await (const chunk of llmStream) {
-  try { guard.onChunk(chunk); yield chunk }
-  catch { break }
-}
-```
+## Proxy
 
-## 2. Daemon mode — OpenAI-compatible proxy
+The proxy (`src/proxy/`) is an Express app exposing `GET /healthz` and
+`POST /v1/chat/completions`.
 
 ```mermaid
 graph LR
-    Client[OpenAI client<br/>any language] -->|POST /v1/chat/completions| T[Tripwire daemon<br/>:8080]
-    T --> Upstream[Real OpenAI / Anthropic]
-    Upstream -->|stream| T
-    T -->|filtered stream| Client
-
-    T -.->|on abort| Audit[(audit log)]
-    T -.->|on observe| Sentry[Sentry/webhook]
-
-    classDef daemon fill:#dcfce7,stroke:#16a34a
-    class T daemon
+    Client[OpenAI client] -->|Bearer caller-key| P[Tripwire proxy :8080]
+    P -->|pinned upstream| U[OpenAI-compatible API]
+    U -->|stream| P
+    P -->|released deltas / rule_trip| Client
 ```
 
-Point your existing OpenAI SDK at `http://localhost:8080/v1`. Tripwire proxies, watches, aborts. Zero code change in your app.
+Per request the handler (`src/proxy/handlers/chat.ts`):
 
-```bash
-# Python
-client = OpenAI(base_url="http://localhost:8080/v1")
+- authenticates the Bearer token (plus an optional proxy token compared with a
+  timing-safe equal), and validates the body (object, `messages` array, `model`
+  string, `n` must be 1, `max_tokens` capped).
+- opens the upstream with an `AbortController` signal, `maxRetries: 0`, and a
+  `baseURL` taken from validated config - never from `OPENAI_BASE_URL`.
+- runs every delta string field (content, refusal, tool-call and function-call
+  arguments) through a per-choice guard, forwarding only released content as
+  synthesized OpenAI delta chunks.
+- aborts the upstream on a rule trip, a client disconnect, or the per-stream time
+  limit; caps total streamed characters; honors SSE backpressure.
+- on failure sends the client only `{ error, upstream_status }`; the full error
+  is logged server-side through `src/proxy/lib/redact.ts`.
 
-# Node
-const openai = new OpenAI({ baseURL: 'http://localhost:8080/v1' })
+The app disables `x-powered-by`, rate-limits per IP (429 + `Retry-After`), and
+caps concurrent streams (503).
 
-# curl
-curl http://localhost:8080/v1/chat/completions ...
-```
+## Boot-time config
 
-Per-call rule overrides via the non-standard `tripwire` field in the request body:
+`loadConfig` (`src/proxy/config.ts`) parses the environment once and fails fast:
 
-```json
-{
-  "model": "gpt-4o",
-  "messages": [...],
-  "tripwire": {
-    "abort": ["FABRICATED_ENTITY"],
-    "observe": ["WORD_CAP"],
-    "context": {
-      "knownProjectNames": ["Goyal Aspire"],
-      "knownBuilderNames": ["Goyal Group"]
-    }
-  }
-}
-```
+- the upstream URL must be a valid `https` URL (http only with
+  `TRIPWIRE_ALLOW_INSECURE_UPSTREAM`), and private, loopback, link-local, and
+  metadata addresses are rejected unless `TRIPWIRE_ALLOW_PRIVATE_UPSTREAM` is set
+  - this is the SSRF guard.
+- custom patterns are parsed from `TRIPWIRE_CUSTOM_PATTERNS`: invalid JSON, a
+  disallowed flag, a nested-quantifier (star height > 1), or a pattern that is
+  slow on an adversarial probe all stop the process at boot rather than surfacing
+  mid-request.
 
----
+See [DEPLOY.md](../DEPLOY.md) for the full environment reference.
 
-## 3. The 16-token window
+## What it does not do
 
-The window size isn't arbitrary. Pattern matches on streaming tokens have to:
-- Be large enough to catch multi-token phrases ("I have booked your visit" = 6 tokens)
-- Be small enough that the abort fires before the harmful phrase finishes rendering
-
-Empirically, 16 tokens covers ~95% of the patterns in the library with average abort-after-trip-token delay of 1.3 tokens. Configurable via `windowSize`.
-
-For sentence-level streams (some Anthropic configs, NeMo Guardrails), bump to 64 — see v1.2 roadmap.
-
----
-
-## 4. Pattern definition
-
-A pattern is a TS function:
-
-```ts
-interface Pattern {
-  id: string
-  severity: 'hard' | 'observe'
-  match: (window: string, ctx: PatternContext) => boolean
-  message?: (window: string) => string
-}
-```
-
-Patterns can be:
-- **Regex** — fastest, most patterns
-- **Structural** — markdown-aware (e.g. `MARKDOWN_INJECTION` checks for unescaped `[link](javascript:...)`)
-- **Contextual** — checks the window against `ctx.knownProjectNames` allowlist (e.g. `FABRICATED_ENTITY`)
-- **Stateful** — `WORD_CAP` tracks cumulative word count across chunks
-
-Ship your own pack:
-
-```ts
-import { defineRulePack } from '@ykstorm/tripwire'
-
-export const myPack = defineRulePack({
-  PII_EMAIL: {
-    severity: 'hard',
-    match: (w) => /\b[\w.-]+@[\w.-]+\.\w+\b/.test(w),
-  },
-})
-```
-
----
-
-## 5. Failure modes (intentional)
-
-| Failure | Tripwire behavior |
-|---|---|
-| Pattern throws unexpected | Caught, logged, treated as observe (never crashes the stream) |
-| Upstream LLM never streams | Tripwire passthrough, audit runs post-completion |
-| Daemon process crash | docker compose restart, in-flight requests get 502 (your retry logic should handle) |
-| Cosmic-ray regex catastrophic backtrack | Pattern is wrapped in a 50ms timeout — auto-disabled with sentry alert if exceeded |
-| Rule pack import error at startup | Daemon fails fast with clear error (not silent runtime failure) |
-
----
-
-## 6. Deployment topology
-
-**Edge guard (Cloudflare Worker):**
-
-```mermaid
-graph LR
-    U[User] -->|HTTPS| CF[Cloudflare Edge]
-    CF --> TW[Tripwire Worker<br/>~5ms p50]
-    TW --> Origin[Your app / OpenAI]
-    Origin --> TW
-    TW --> CF
-    CF --> U
-```
-
-Sub-50ms guard at the edge. Best for high-traffic chatbots.
-
-**Sidecar (Kubernetes):**
-
-```mermaid
-graph LR
-    Pod[Pod] --> App[App container]
-    Pod --> Sidecar[Tripwire sidecar<br/>localhost:8080]
-    App -->|localhost:8080| Sidecar
-    Sidecar --> OpenAI
-```
-
-Per-pod guard, no network hop, easy to deploy alongside existing services.
-
-**Standalone (Fly.io / Render / VPS):**
-
-Single Docker container, OpenAI-compatible endpoint. Cheapest path to production.
-
----
-
-## 7. What it doesn't do (deliberately)
-
-- **No ML-based classification.** Toxic-language detection is OpenAI Moderation's job; jailbreak detection is Lakera's. Tripwire complements them; it doesn't replace them.
-- **No state machine.** No multi-turn flow control. That's NeMo Guardrails.
-- **No PII redaction.** Patterns detect leaks; they don't rewrite. Use a redactor downstream if you need that.
-- **No fine-tuned models.** Pure regex + structural + contextual rules. Explainable, debuggable, deterministic.
+- No ML classification, no multi-turn state machine, no PII redaction of output.
+- No per-tenant policy: one global rule set per proxy.
+- No semantic matching: a paraphrased violation that matches no pattern passes.
