@@ -17,8 +17,10 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Run per-chunk overhead benchmark
-        run: node bench/per-chunk.mjs | tee bench/results.txt
+        run: node bench/per-chunk.mjs | tee bench/current.txt
+      - name: Fail on >3x regression over the committed baseline
+        run: node bench/check-regression.mjs bench/results.txt bench/current.txt
       - uses: actions/upload-artifact@v4
         with:
           name: per-chunk
-          path: bench/results.txt
+          path: bench/current.txt

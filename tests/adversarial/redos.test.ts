@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { parseCustomPatterns, maxStarHeight, ConfigError } from '../../src/proxy/config.js'
-import { checkResponse, MAX_CHECK_CHARS, InputTooLargeError } from '../../src/check.js'
+import { checkResponse, MAX_CHECK_CHARS, InputTooLargeError } from '../../src/check/index.js'
 import { StreamingGuard, ChunkTooLargeError, MAX_CHUNK_CHARS } from '../../src/streaming/index.js'
 
 function elapsed(fn: () => void): number {

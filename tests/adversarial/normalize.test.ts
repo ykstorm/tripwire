@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { normalize } from '../../src/normalize.js'
 import { StreamingGuard, GuardAbortError } from '../../src/streaming/index.js'
-import { checkResponse } from '../../src/check.js'
+import { checkResponse } from '../../src/check/index.js'
 import { PHONE_PATTERN, SECRET_LEAK_PATTERN } from '../../src/patterns/index.js'
 
 // Feed chunks into a guard and return whether it hard-aborted.

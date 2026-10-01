@@ -40,7 +40,6 @@ RUN addgroup --system --gid 1001 nodejs \
 
 COPY --from=prod-deps --chown=tripwire:nodejs /app/node_modules ./node_modules
 COPY --from=builder   --chown=tripwire:nodejs /app/dist          ./dist
-COPY --from=builder   --chown=tripwire:nodejs /app/bin           ./bin
 COPY --chown=tripwire:nodejs package.json ./
 
 USER tripwire

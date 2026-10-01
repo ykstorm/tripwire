@@ -37,6 +37,15 @@ export const DEFAULT_HOLDBACK = 48
 /** A single onChunk delta larger than this is rejected (see ChunkTooLargeError). */
 export const MAX_CHUNK_CHARS = 16384
 
+/** Characters of prior context scanned alongside each new chunk. Comfortably
+ *  larger than any built-in pattern's span, so a straddling match is caught the
+ *  moment its final character arrives without re-scanning the whole buffer. */
+const SCAN_OVERLAP = 512
+
+/** Fast path: normalization only changes non-ASCII text (code unit >= 0x80,
+ *  which also covers astral characters via their surrogate halves). */
+const NON_ASCII = /\P{ASCII}/u
+
 /** Thrown by onChunk when a hard-abort pattern matches. Always thrown on abort,
  *  even when a caller-supplied onAbort handler does not throw. */
 export class GuardAbortError extends Error {
@@ -95,7 +104,6 @@ export class StreamingGuard {
   private abortRule = 'ABORTED'
   private readonly firedObserve = new Set<string>()
   private readonly holdback: number
-  private readonly matchWindow: number
   private readonly patterns: PatternEntry[]
   private readonly onViolate: ViolationHandler
   private readonly onAbort: AbortHandler
@@ -103,10 +111,6 @@ export class StreamingGuard {
 
   constructor(options: StreamingGuardOptions = {}) {
     this.holdback = Math.max(0, options.holdback ?? DEFAULT_HOLDBACK)
-    // A match can span at most one max-size chunk plus the held-back tail, so a
-    // trailing window of that size catches every straddling violation while
-    // keeping per-chunk cost flat regardless of total response length.
-    this.matchWindow = MAX_CHUNK_CHARS + this.holdback + 4096
     this.onViolate = options.onViolate ?? (() => {})
     this.onAbort = options.onAbort ?? (() => {})
 
@@ -149,7 +153,7 @@ export class StreamingGuard {
       throw new ChunkTooLargeError(chunk.length)
     }
     this.raw += chunk
-    this.runPatterns()
+    this.runPatterns(chunk.length)
     return this.releasable()
   }
 
@@ -172,9 +176,12 @@ export class StreamingGuard {
     this.firedObserve.clear()
   }
 
-  private runPatterns(): void {
-    const start = Math.max(0, this.raw.length - this.matchWindow)
-    const text = normalize(this.raw.slice(start))
+  private runPatterns(chunkLen: number): void {
+    // Scan only the new chunk plus enough prior context to catch a straddling
+    // match; normalize only when the window actually holds non-ASCII text.
+    const start = Math.max(0, this.raw.length - chunkLen - SCAN_OVERLAP)
+    const window = this.raw.slice(start)
+    const text = NON_ASCII.test(window) ? normalize(window) : window
     for (const { pattern, label, mode } of this.patterns) {
       if (!pattern.test(text)) continue
       const violation = `${label}: pattern matched in stream`

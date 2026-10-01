@@ -1,0 +1,7 @@
+# tripwire streaming-guard per-chunk benchmark baseline
+# Captured 2026-10-01 on Node v24.14.0 (local). Reproduce with: node bench/per-chunk.mjs
+# The benchmark workflow fails if a run exceeds 3x the per_chunk_us below.
+tokens/stream=521 streams=20000 total_chunks=10420000
+per_chunk_us=3.231
+throughput_M_chunks_per_sec=0.31
+node=v24.14.0

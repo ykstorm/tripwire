@@ -13,4 +13,4 @@ export {
   type ClassifiedQuery,
   type Intent,
   type Persona,
-} from './check.js'
+} from './check/index.js'
