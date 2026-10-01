@@ -3,7 +3,7 @@
 // Intentionally does NOT match code fences (``` backticks), which the model
 // may legitimately emit. Covers:
 //   - line-leading dash/star/plus bullets
-//   - #–###### headers
+//   - #-###### headers
 //   - **bold** emphasis
 //   - __underline__ emphasis
 

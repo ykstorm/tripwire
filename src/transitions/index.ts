@@ -1,4 +1,4 @@
-// LOCKS-2 — Admin-side lock action constants.
+// LOCKS-2 - Admin-side lock action constants.
 // Master Manual §6 automation locks: Builder Hold/Suspend/Remove + Project Hold/Archive.
 
 export const BUILDER_LOCK_ACTIONS = {
@@ -65,7 +65,7 @@ export function validateBuilderTransition(
     return 'Builder is already ACTIVE.'
   }
   if (from === 'REMOVED' && action !== BUILDER_LOCK_ACTIONS.REACTIVATE) {
-    return 'Builder is REMOVED — Reactivate first before applying another action.'
+    return 'Builder is REMOVED - Reactivate first before applying another action.'
   }
   return null
 }
@@ -80,7 +80,7 @@ export function validateProjectTransition(
     return 'Project is already ACTIVE.'
   }
   if (from === 'ARCHIVED' && action !== PROJECT_LOCK_ACTIONS.REACTIVATE) {
-    return 'Project is ARCHIVED — Reactivate first before applying another action.'
+    return 'Project is ARCHIVED - Reactivate first before applying another action.'
   }
   return null
 }

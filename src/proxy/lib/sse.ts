@@ -6,7 +6,7 @@
 
 import type { Response } from 'express'
 
-/** Write the SSE response headers (idempotent — only flushes once). */
+/** Write the SSE response headers (idempotent - only flushes once). */
 export function initSSE(res: Response): void {
   if (res.headersSent) return
   res.setHeader('Content-Type', 'text/event-stream')

@@ -1,4 +1,4 @@
-// POST /v1/chat/completions — OpenAI-compatible guarded proxy handler.
+// POST /v1/chat/completions - OpenAI-compatible guarded proxy handler.
 //
 // Forwards the caller's request to the pinned upstream using the caller's Bearer
 // token, runs every streamed delta field through the hold-back guard, and
@@ -106,7 +106,7 @@ function validateBody(raw: unknown, config: ProxyConfig): Record<string, unknown
   if (body.n !== undefined && body.n !== null) {
     const n = Number(body.n)
     if (!Number.isInteger(n) || n !== 1) {
-      throw new BadRequestError('n must be 1 — the guarded proxy does not support multiple choices')
+      throw new BadRequestError('n must be 1 - the guarded proxy does not support multiple choices')
     }
   }
   const cap = config.defaultMaxTokens
@@ -285,7 +285,7 @@ export function makeChatHandler(
         await writeSSE(res, { error: 'stream_too_large' })
         res.end()
       } else if (ac.signal.aborted) {
-        // Client disconnect or stream-time limit — nothing more to send.
+        // Client disconnect or stream-time limit - nothing more to send.
         res.end()
       } else if (!res.headersSent) {
         res.status(502).json({ error: 'upstream_failure' })

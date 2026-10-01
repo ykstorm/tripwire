@@ -1,4 +1,4 @@
-// Contact-leak patterns — exported for real-time onChunk guards.
+// Contact-leak patterns - exported for real-time onChunk guards.
 //
 // All matching happens on normalized text (see src/normalize.ts), so these only
 // have to describe the canonical ASCII form.

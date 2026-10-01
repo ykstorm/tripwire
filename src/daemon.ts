@@ -1,4 +1,4 @@
-// Tripwire HTTP daemon — boots the OpenAI-compatible guarded proxy.
+// Tripwire HTTP daemon - boots the OpenAI-compatible guarded proxy.
 //
 // Exposes:
 //   GET  /healthz                 -> { ok: true, version }

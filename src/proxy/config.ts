@@ -1,4 +1,4 @@
-// Proxy configuration — parsed once at boot, fail-fast on anything invalid.
+// Proxy configuration - parsed once at boot, fail-fast on anything invalid.
 //
 // Everything that could make the proxy unsafe at runtime (an SSRF-able upstream
 // URL, a catastrophic custom regex, a malformed pattern blob) is validated here
@@ -27,7 +27,7 @@ export class ConfigError extends Error {
   }
 }
 
-/** Truthy env flag — accepts 1/true/yes/on (case-insensitive), not just "true". */
+/** Truthy env flag - accepts 1/true/yes/on (case-insensitive), not just "true". */
 export function envFlag(value: string | undefined): boolean {
   if (!value) return false
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
@@ -116,7 +116,7 @@ interface RawPattern {
 
 /**
  * Maximum nesting depth of unbounded repetition (`*`, `+`, `{n,}`) in a regex
- * source. `a+` is 1; `(a+)+` is 2 — the classic catastrophic-backtracking shape.
+ * source. `a+` is 1; `(a+)+` is 2 - the classic catastrophic-backtracking shape.
  */
 export function maxStarHeight(source: string): number {
   let i = 0
@@ -184,7 +184,7 @@ export function maxStarHeight(source: string): number {
       return inner
     }
     if (c === '[') {
-      // character class — skip to the closing ], honoring escapes
+      // character class - skip to the closing ], honoring escapes
       i++
       if (source[i] === '^') i++
       if (source[i] === ']') i++
@@ -219,7 +219,7 @@ function screenForRedos(pattern: RegExp, label: string): void {
     const ms = Number(process.hrtime.bigint() - t0) / 1e6
     if (ms > 20) {
       throw new ConfigError(
-        `custom pattern "${label}" is too slow (${ms.toFixed(1)}ms on a 100k probe) — likely catastrophic backtracking`
+        `custom pattern "${label}" is too slow (${ms.toFixed(1)}ms on a 100k probe) - likely catastrophic backtracking`
       )
     }
   }

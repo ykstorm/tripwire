@@ -22,7 +22,7 @@ export function startProxy(): Server {
 
   if (!config.proxyToken) {
     console.warn(
-      '[tripwire] TRIPWIRE_PROXY_TOKEN is not set — anyone who can reach this port can use the proxy'
+      '[tripwire] TRIPWIRE_PROXY_TOKEN is not set - anyone who can reach this port can use the proxy'
     )
   }
 

@@ -5,9 +5,9 @@
 // swapping an ASCII hyphen for a look-alike dash. normalize() folds those
 // evasions away so the pattern set only has to describe one canonical form:
 //
-//   1. NFKC — collapses compatibility forms (full-width `９` to `9`, ligatures,
+//   1. NFKC - collapses compatibility forms (full-width `９` to `9`, ligatures,
 //      etc.) into their canonical ASCII equivalents.
-//   2. Strip Unicode format characters (\p{Cf}) — removes zero-width spaces,
+//   2. Strip Unicode format characters (\p{Cf}) - removes zero-width spaces,
 //      joiners, and the BOM that can be inserted mid-token.
 //   3. Map Indic / Arabic decimal digits to ASCII 0-9.
 //   4. Fold dash look-alikes (en dash, em dash, minus sign, ...) to '-'.

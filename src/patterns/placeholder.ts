@@ -1,4 +1,4 @@
-// Placeholder-leak patterns — unsubstituted template variables that escaped
+// Placeholder-leak patterns - unsubstituted template variables that escaped
 // into model output.
 //
 // These only fire on the exact placeholder shapes from the prompt vocabulary,

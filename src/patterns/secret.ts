@@ -1,7 +1,6 @@
-// Secret / credential leak pattern — a hard-abort guard. Each alternative is
-// anchored to a provider-specific prefix plus a minimum token length, so prose
-// ("the API key is in the vault") does not trip it and every quantifier is a
-// single bounded character class (linear, no catastrophic backtracking).
+// Secret / credential leak pattern (hard abort). Each alternative is a
+// prefix-anchored, length-bounded single class, so prose does not trip it and
+// matching stays linear.
 
 /**
  * Matches common leaked credentials in a token stream: modern OpenAI/Anthropic

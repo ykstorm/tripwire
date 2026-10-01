@@ -1,4 +1,4 @@
-// Streaming guard — real-time pattern detection during an LLM token stream.
+// Streaming guard - real-time pattern detection during an LLM token stream.
 //
 // The core guarantee is the hold-back buffer. A violation can straddle a chunk
 // boundary ("call " + "98765" + "43210"): if the guard released each chunk as it
@@ -56,9 +56,9 @@ export class ChunkTooLargeError extends Error {
   }
 }
 
-/** Soft-observe handler — called when an observe pattern fires. */
+/** Soft-observe handler - called when an observe pattern fires. */
 export type ViolationHandler = (violation: string, pattern: string) => void
-/** Hard-abort handler — called when an abort pattern fires. May throw; the guard
+/** Hard-abort handler - called when an abort pattern fires. May throw; the guard
  *  throws GuardAbortError afterwards regardless. */
 export type AbortHandler = (violation: string, pattern: string) => void
 
@@ -111,11 +111,11 @@ export class StreamingGuard {
     this.onAbort = options.onAbort ?? (() => {})
 
     this.patterns = [
-      // Safety — hard abort.
+      // Safety - hard abort.
       { pattern: SECRET_LEAK_PATTERN, label: 'SECRET_LEAK', mode: 'abort' },
       { pattern: CONTACT_LEAK_PATTERN, label: 'CONTACT_LEAK', mode: 'abort' },
       { pattern: BUSINESS_LEAK_PATTERN, label: 'BUSINESS_LEAK', mode: 'abort' },
-      // Content quality — soft observe.
+      // Content quality - soft observe.
       { pattern: PRICE_DISCOUNT_COMMIT_PATTERN, label: 'PRICE_COMMITMENT_LEAK', mode: 'observe' },
       { pattern: PRICE_FINAL_COMMIT_PATTERN, label: 'PRICE_COMMITMENT_LEAK', mode: 'observe' },
       { pattern: COMMISSION_PATTERN, label: 'COMMISSION_DISCUSSION_LEAK', mode: 'observe' },

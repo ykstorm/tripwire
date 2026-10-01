@@ -1,7 +1,7 @@
 // Structured per-request logging for the proxy.
 //
 // Emits one JSON line per completed request with latency, abort status, and
-// which rule (if any) fired. No external deps — writes to stdout/stderr.
+// which rule (if any) fired. No external deps - writes to stdout/stderr.
 
 export interface RequestLog {
   ts: string
