@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * smoke-test.js — End-to-end smoke test for guardrail-proxy
+ * smoke-test.js — End-to-end smoke test for tripwire
  * Run: node scripts/smoke-test.js
  *
  * Tests the guard against real problematic patterns.
@@ -27,7 +27,7 @@ function assertEqual(actual, expected, msg) {
   if (actual !== expected) throw new Error(`${msg}: expected ${expected}, got ${actual}`)
 }
 
-console.log('\n=== guardrail-proxy smoke tests ===\n')
+console.log('\n=== tripwire smoke tests ===\n')
 
 // --- checkResponse tests ---
 
@@ -113,23 +113,32 @@ test('.reset() clears violations', () => {
   assertEqual(guard.violations.length, 0, 'violations should be empty after reset')
 })
 
-test('hard abort delivers partial content before the banned token', () => {
-  // The consumer accumulates delivered text and stops on abort (the documented
-  // streaming pattern). The banned token must NOT be in the delivered output.
+test('hold-back releases safe text but never the banned token', () => {
+  // The guard releases text lagging by the hold-back and aborts before the
+  // banned token clears the buffer, so the consumer forwards only what onChunk
+  // returns and never sees the phone number.
   let delivered = ''
-  const guard = new StreamingGuard({
-    onAbort: () => { throw new Error('ABORT') },
-  })
-  for (const chunk of ['The property ', 'call 9988776655 now']) {
+  const guard = new StreamingGuard({ holdback: 4 })
+  for (const chunk of ['The property is lovely, ', 'call 9988776655 now']) {
     try {
-      guard.onChunk(chunk)
-      delivered += chunk
+      delivered += guard.onChunk(chunk)
     } catch (e) {
       break
     }
   }
-  if (!delivered.includes('The property')) throw new Error('delivered should include partial text')
+  if (!delivered.includes('The property')) throw new Error('safe prefix should be released')
   if (delivered.includes('9988776655')) throw new Error('banned phone token must not be delivered')
+})
+
+test('normalized unicode evasion still aborts (zero-width split secret)', () => {
+  const guard = new StreamingGuard({ onAbort: () => { throw new Error('ABORT') } })
+  let aborted = false
+  try {
+    guard.onChunk('key: sk-​proj-AbCdEfGhIj1234567890KL')
+  } catch (e) {
+    aborted = true
+  }
+  if (!aborted) throw new Error('expected zero-width-split secret to abort')
 })
 
 test('custom pattern merges with built-ins and fires', () => {

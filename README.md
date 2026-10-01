@@ -1,25 +1,41 @@
 # Tripwire
 
-**Mid-stream LLM safety. Catch the lie before the user finishes reading it.**
+**Regex guardrails for streaming LLM output.**
 
 [![npm](https://img.shields.io/npm/v/@ykstormsorg/tripwire.svg)](https://www.npmjs.com/package/@ykstormsorg/tripwire)
 [![CI](https://github.com/ykstorm/tripwire/actions/workflows/ci.yml/badge.svg)](https://github.com/ykstorm/tripwire/actions/workflows/ci.yml)
-[![bench](https://github.com/ykstorm/tripwire/actions/workflows/benchmark.yml/badge.svg)](https://github.com/ykstorm/tripwire/actions/workflows/benchmark.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-A regex/policy guard that watches an LLM token stream and aborts the response the moment a rule trips. Post-hoc audit mode also available for batch reviews.
+Tripwire watches an LLM token stream and aborts the response the moment a rule
+trips, before the offending text reaches the user. It ships as a library you
+import at your call site and as an OpenAI-compatible proxy you can run as a
+sidecar. A post-hoc audit mode (`checkResponse`) shares the same pattern set for
+batch review of completed responses.
+
+## What it is, plainly
+
+Tripwire is regex-based. It catches mechanical leaks — API keys, phone numbers,
+email addresses, fixed phrases — in the stream. It does not understand meaning,
+so it will not catch a paraphrased or semantically-equivalent violation that
+matches no pattern. Because it holds back a short tail of the stream to catch
+violations that straddle a chunk boundary, output lags delivery by the hold-back
+length (48 characters by default).
 
 ---
 
 ## The problem
 
-LLM streams are all-or-nothing — once you start yielding tokens, you're committed. A model that invents a non-existent project name, commits a fake discount, or leaks a placeholder like `{{PRICE}}` has already delivered the lie. Tripwire lets you stop it mid-sentence.
+A streamed response commits tokens to the screen as they generate. A model that
+emits a contact-info leak, an unfilled placeholder, or a committed discount has
+already shown it to the user by the time any completion-time check runs. Tripwire
+moves the check inside the stream: it matches the accumulated (normalized) text
+on every chunk and can abort before the matched text is released.
 
----
-
-## Why this exists
-
-I extracted this pattern from [Homesty.ai](https://homesty.ai)'s production buyer chat, where a streamed response can carry a contact-info leak, a fabricated discount, or a project name that does not exist in the database. Post-hoc checking meant the violation was delivered, then noticed. Moving the check inside the stream — accumulated-text matching on every chunk, measured at ~4.7 µs per token in CI — converts "the violation got logged" into "the user never saw it". The two-tier split is the design core: hard-abort is reserved for irreversible data leaks, soft-observe covers everything whose false-positive cost exceeds its blast radius, and a pattern earns promotion from observe to abort only after its precision is measured.
+The key mechanism is a **hold-back buffer**. If the guard released each chunk the
+instant it arrived, a violation split across chunks (`call ` + `98765` + `43210`)
+would send its safe-looking prefix before the full pattern was visible. Instead
+the guard withholds the last `holdback` characters until enough following context
+has arrived to rule out a straddling match.
 
 ---
 
@@ -29,34 +45,48 @@ I extracted this pattern from [Homesty.ai](https://homesty.ai)'s production buye
 LLM stream tokens
     │
     ▼
-StreamingGuard  ──▶  Abort patterns (hard triggers)
- (token-by-token)    └── throws immediately on match
+StreamingGuard.onChunk(token)
+    │   matches normalized accumulated text
+    ├── abort pattern matches ─▶ throw GuardAbortError (stops the stream)
+    └── observe pattern matches ─▶ record + onViolate, keep streaming
     │
-    ├──▶  Observe patterns (soft triggers)
-          └── logs violation, continues streaming
+    ▼
+returns releasable text (all but the held-back tail); flush() drains the tail
 ```
 
-**StreamingGuard** — wraps an async token generator. Calls `onChunk(token)` on each token, checks accumulated text against pattern list, throws immediately on hard-abort match.
+**StreamingGuard** wraps a token stream. Call `onChunk(token)` per token and
+forward what it returns; call `flush()` before you close the stream.
 
-**Post-hoc check** — `checkResponse(text)` runs all patterns against a completed response. Returns violations without throwing.
+**checkResponse** runs the full pattern set against a completed response and
+returns its violations without throwing.
 
 ---
 
-## Features at a glance
+## Features
 
-**Hard-abort patterns** (throw, stop the stream mid-token on match):
-- Secret leaks — API keys, access tokens, private keys the model must never echo (`SECRET_LEAK`)
-- Contact info — emails, phone numbers in the response (`CONTACT_LEAK`)
-- Business entity leaks — non-existent project / builder names (`BUSINESS_LEAK`)
+**Hard-abort patterns** (throw `GuardAbortError`, stop the stream on match):
+- `SECRET_LEAK` — API keys, tokens, and private keys the model must never echo
+  (OpenAI/Anthropic `sk-`, Stripe, GitLab, npm, Slack, AWS, Google, JWT, PEM, Bearer)
+- `CONTACT_LEAK` — phone numbers and email addresses
+- `BUSINESS_LEAK` — commission-rate / partner-status language
 
-**Soft-observe patterns** (log a structured warning, never block the stream):
-- `{{PLACEHOLDER}}` vars — unfilled template variables
-- Price manipulation — fabricated discounts or commission claims
-- Markdown artifacts — triple-backtick blocks in non-code context
+**Soft-observe patterns** (record a violation, never block the stream):
+- `PLACEHOLDER_LEAK` — unsubstituted template variables such as `[PROJECT_A]`
+- `PRICE_COMMITMENT_LEAK` / `COMMISSION_DISCUSSION_LEAK` — committed discounts or
+  quoted commission percentages
+- `NO_MARKDOWN` — markdown bullets, bold, and headers (fenced code blocks are
+  explicitly excluded)
 
-> Hard-abort is reserved for irreversible data leaks (real contact / business
-> data). Price and placeholder mentions are observe-only by default to avoid
-> false-positive stream kills; promote them with `TRIPWIRE_CUSTOM_PATTERNS`.
+Hard-abort is reserved for irreversible leaks. Promote an observe pattern or add
+your own with `TRIPWIRE_CUSTOM_PATTERNS`.
+
+### Unicode normalization
+
+Every match runs on normalized text, so common evasions are folded away first:
+NFKC (full-width to ASCII), zero-width format characters stripped, Indic/Arabic
+digits mapped to ASCII, and dash look-alikes folded to `-`. A phone number
+written with Devanagari digits or a key split by a zero-width space is still
+caught.
 
 ---
 
@@ -66,14 +96,6 @@ StreamingGuard  ──▶  Abort patterns (hard triggers)
 npm install @ykstormsorg/tripwire
 ```
 
-Or start from source:
-
-```bash
-git clone https://github.com/ykstorm/tripwire.git
-cd tripwire
-npm install
-```
-
 ---
 
 ## Usage
@@ -81,20 +103,23 @@ npm install
 ### Streaming guard (real-time)
 
 ```typescript
-import { createStreamingGuard } from '@ykstormsorg/tripwire'
+import { createStreamingGuard, GuardAbortError } from '@ykstormsorg/tripwire'
 
 const guard = createStreamingGuard({
-  onAbort: (violation, pattern) => {
-    throw new Error(`[TRIPWIRE] ${violation}`)
-  },
-  onViolate: (violation, pattern) => {
-    console.warn(`[observe] ${violation}`)
-  }
+  onViolate: (violation, pattern) => console.warn(`[observe] ${violation}`),
 })
 
-for await (const token of llmStream) {
-  guard.onChunk(token) // throws mid-stream on abort pattern
-  yield token
+try {
+  for await (const token of llmStream) {
+    send(guard.onChunk(token)) // forward only what the guard releases
+  }
+  send(guard.flush())          // release the held-back tail
+} catch (err) {
+  if (err instanceof GuardAbortError) {
+    // err.rule is the pattern that fired; swap in a safe fallback
+  } else {
+    throw err
+  }
 }
 ```
 
@@ -103,41 +128,27 @@ for await (const token of llmStream) {
 ```typescript
 import { checkResponse } from '@ykstormsorg/tripwire'
 
-const result = checkResponse(llmResponseText)
-if (result.violations.length > 0) {
-  console.log('Violations:', result.violations)
-}
-```
-
-### Post-hoc audit with context
-
-```typescript
 const result = checkResponse(aiText, {
   knownProjectNames: ['Arialife Heights', 'San Villa'],
-  classified: { intent: 'comparison_query', persona: 'premium' }
+  classified: { intent: 'comparison_query', persona: 'premium' },
 })
-if (!result.passed) {
-  result.violations.forEach(v => console.error('[VIOLATION]', v))
-}
+if (!result.passed) result.violations.forEach((v) => console.error('[VIOLATION]', v))
 ```
 
 ### Run as a sidecar proxy
 
 Tripwire ships an OpenAI-compatible proxy. It accepts requests in OpenAI's
-exact `/v1/chat/completions` shape, forwards them upstream using the caller's
-own Bearer token (no key management on the proxy), streams the response back as
-SSE, and **aborts mid-stream** the instant a hard rule fires.
+`/v1/chat/completions` shape, forwards them to a pinned upstream using the
+caller's own Bearer token (the proxy holds no upstream key), streams the response
+back as SSE, and aborts mid-stream the instant a hard rule fires.
 
 ```bash
-# from a clone — build then run (defaults to :8080, override with PORT)
 npm install && npm run build
-npm run proxy            # or: node dist/daemon.js  /  npx tripwire-proxy
+npm run proxy            # defaults to :8080, override with PORT
 
-# health
 curl http://localhost:8080/healthz
-# { "ok": true, "version": "1.0.1" }
+# { "ok": true, "version": "1.1.0" }   (version is read from package.json)
 
-# stream a completion through the guard
 curl -N -X POST http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "Content-Type: application/json" \
@@ -151,71 +162,46 @@ data: {"error":"rule_trip","violation":"CONTACT_LEAK: pattern matched in stream"
 ```
 
 Behavior:
-- `401` on missing/invalid `Authorization` header
-- `502` on upstream failure (bad key, network)
-- benign prompts stream through unchanged and end with `data: [DONE]`
-- soft-observe rules log a structured warning but never block the stream
-- extra abort/observe rules via `TRIPWIRE_CUSTOM_PATTERNS` (JSON array of
-  `{ "source", "flags", "label", "mode" }`)
+- `401` on missing/invalid `Authorization` (or proxy token, if configured)
+- `400` on an invalid body (not an object, no `messages` array, `n` other than 1)
+- `502` on upstream failure — the client gets `{ "error": "upstream_failure", "upstream_status": <n|null> }`; the full error is logged server-side with secrets redacted
+- `429` with `Retry-After` when the per-IP rate limit is exceeded; `503` when the global concurrency cap is reached
+- benign prompts stream through and end with `data: [DONE]`
+- extra abort/observe rules via `TRIPWIRE_CUSTOM_PATTERNS` (a JSON array of
+  `{ "source", "flags", "label", "mode" }`), validated and screened at boot
 
-Run it as a container or Kubernetes sidecar — see [DEPLOY.md](./DEPLOY.md).
+See [DEPLOY.md](./DEPLOY.md) for the container setup and the full environment
+reference.
 
 ---
 
 ## API reference
 
-### `createStreamingGuard(options)`
+### `createStreamingGuard(options)` / `new StreamingGuard(options)`
 
-Wraps a token stream. Returns a `StreamingGuard` instance.
+- `onViolate(violation, pattern)` — called when a soft-observe pattern fires
+- `onAbort(violation, pattern)` — called when a hard-abort pattern fires; the
+  guard throws `GuardAbortError` afterwards whether or not this handler throws
+- `patterns` — custom patterns **merged with** the built-ins (they do not replace them)
+- `holdback` — characters withheld until following context arrives (default 48)
 
-**Options:**
-- `onAbort(violation, pattern)` — called when a hard-abort pattern fires; throw to stop streaming
-- `onViolate(violation, pattern)` — called when a soft-observe pattern fires; non-fatal
-- `patterns` — optional list of custom pattern objects (defaults to all built-ins)
-
-**StreamingGuard instance:**
-- `onChunk(chunk)` — call once per token
-- `reset()` — clear accumulated buffer
-- `violations` — array of soft-observe violations from the current stream
+Instance: `onChunk(chunk)` returns the releasable text (and throws
+`GuardAbortError` on a hard match or if already aborted); `flush()` returns the
+held-back tail; `reset()` clears buffers, violations, and the abort latch;
+`violations` is the observe-violation list; `aborted` reports the latch.
 
 ### `checkResponse(text, options?)`
 
-Runs all patterns against a completed response.
-
-**Returns:** `{ passed: boolean, violations: string[] }`
-
-**Options:**
-- `knownProjectNames` — whitelist of real project names
-- `knownBuilderNames` — whitelist of real builder names
-- `unverifiedProjectNames` — names detected but not yet confirmed
-- `buyerMessage` — original user query (used for persona-aware word caps)
-- `classified` — `{ intent, persona }` for intent-specific checks
+Returns `{ passed: boolean, violations: string[] }`. Throws `InputTooLargeError`
+if `text` exceeds `MAX_CHECK_CHARS` (100k). Options: `knownProjectNames`,
+`knownBuilderNames`, `unverifiedProjectNames`, `buyerMessage`, `classified`
+(`{ intent, persona }`).
 
 ### Status transition validation
 
-```typescript
-import {
-  validateBuilderTransition,
-  validateProjectTransition,
-  nextBuilderStatus,
-  nextProjectStatus,
-  reasonRequired
-} from '@ykstormsorg/tripwire'
-
-// Validate a Builder status transition
-const err = validateBuilderTransition('REMOVED', 'BUILDER_HOLD')
-if (err) {
-  // show err to operator, don't apply action
-}
-
-// Get next status for an action
-const nextStatus = nextBuilderStatus('BUILDER_SUSPEND')
-
-// Check if a reason is required before applying an action
-if (reasonRequired('BUILDER_REMOVE')) {
-  // prompt operator for reason before proceeding
-}
-```
+`validateBuilderTransition`, `validateProjectTransition`, `nextBuilderStatus`,
+`nextProjectStatus`, and `reasonRequired` are pure functions for Builder/Project
+lock-state machines (no DB, no async).
 
 ---
 
@@ -223,16 +209,18 @@ if (reasonRequired('BUILDER_REMOVE')) {
 
 | Pattern | Type | Description |
 |---|---|---|
-| `SECRET_LEAK_PATTERN` | abort | Leaked API keys / tokens / private keys (OpenAI, Anthropic, AWS, GitHub, Google, Slack, PEM, long Bearer) |
-| `CONTACT_LEAK_PATTERN` | abort | Phone numbers and email addresses |
-| `BUSINESS_LEAK_PATTERN` | abort | Commission rate, partner status mentions |
-| `MARKDOWN_PATTERN` | observe | Bold `**`, headers `#`, bullets `-` |
+| `SECRET_LEAK_PATTERN` | abort | Leaked API keys / tokens / private keys |
+| `CONTACT_LEAK_PATTERN` / `PHONE_PATTERN` / `EMAIL_PATTERN` | abort | Phone numbers and email addresses |
+| `BUSINESS_LEAK_PATTERN` | abort | Commission-rate / partner-status language |
+| `MARKDOWN_PATTERN` | observe | Bold `**`, headers `#`, bullets `-` (not fences) |
 | `PLACEHOLDER_NAME_PATTERN` | observe | `[PROJECT_A]`, `[BUILDER_X]` tokens |
 | `PLACEHOLDER_PRICE_PATTERN` | observe | `₹X,XXX/sqft`, `₹X.X Cr` tokens |
 | `PLACEHOLDER_CUID_PATTERN` | observe | `[PROJECT_X_ID]` tokens |
-| `PRICE_DISCOUNT_COMMIT_PATTERN` | observe | `X% discount/off/kam` — Lock #1 |
-| `PRICE_FINAL_COMMIT_PATTERN` | observe | `final/exact/confirmed/locked + price` — Lock #1 |
-| `COMMISSION_PATTERN` | observe | `X% commission/brokerage` — Lock #2 |
+| `PRICE_DISCOUNT_COMMIT_PATTERN` / `PRICE_FINAL_COMMIT_PATTERN` | observe | Committed discount / final price (Lock #1) |
+| `COMMISSION_PATTERN` | observe | Quoted commission / brokerage % (Lock #2) |
+
+The pattern set is Homesty-specific in places (area/amenity allowlists, Hinglish
+and Lock rules live in `checkResponse`). The core streaming guard is generic.
 
 ---
 
@@ -240,71 +228,54 @@ if (reasonRequired('BUILDER_REMOVE')) {
 
 ```
 src/
-  patterns/
-    index.ts          — all exported patterns + helpers
-    contact.ts        — CONTACT_LEAK_PATTERN
-    business.ts       — BUSINESS_LEAK_PATTERN
-    markdown.ts       — MARKDOWN_PATTERN
-    placeholder.ts    — PLACEHOLDER_*_PATTERN
-    locks1.ts         — PRICE_DISCOUNT_COMMIT_PATTERN, PRICE_FINAL_COMMIT_PATTERN, COMMISSION_PATTERN
-  streaming/
-    index.ts          — StreamingGuard class + createStreamingGuard
-  transitions/
-    index.ts          — actions, nextBuilderStatus, nextProjectStatus, validate*Transition, reasonRequired
+  normalize.ts        — unicode normalization applied before every match
+  patterns/           — exported regex patterns (contact, secret, business, markdown, placeholder, locks1)
+  streaming/index.ts  — StreamingGuard (hold-back buffer, GuardAbortError) + createStreamingGuard
+  transitions/index.ts — Builder/Project lock-state helpers
+  check/              — checkResponse: shared context + a rule table under check/rules/
   proxy/
-    server.ts         — Express app (createProxyServer)
-    handlers/chat.ts  — POST /v1/chat/completions guarded streaming handler
-    lib/sse.ts        — SSE framing helpers
+    config.ts         — boot-time config parse + validation (upstream pinning, custom patterns)
+    server.ts         — Express app (rate limit, concurrency cap)
+    start.ts          — shared daemon/CLI boot
+    handlers/chat.ts  — guarded POST /v1/chat/completions
+    lib/sse.ts        — SSE framing with backpressure
+    lib/redact.ts     — secret redaction for logs
     lib/logging.ts    — structured per-request logging
-  check.ts            — checkResponse (the main audit function)
+  daemon.ts           — daemon entrypoint
 bin/
-  tripwire-proxy.ts   — CLI entrypoint for the proxy
+  tripwire-proxy.ts   — CLI entrypoint
 ```
 
-The core library (`patterns`, `streaming`, `transitions`, `check`) has **no
-runtime dependencies**. The optional sidecar proxy pulls in `express` and the
-`openai` SDK.
+The core library (`normalize`, `patterns`, `streaming`, `transitions`, `check`)
+has no runtime dependencies. The proxy pulls in `express` and the `openai` SDK.
 
 ---
 
 ## Performance
 
-The guard runs on the hot path of every streamed token, so its overhead has to
-be negligible next to the network gap between tokens. Measured in CI (GitHub
-Actions `ubuntu-latest`, Node 20) by
-[`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml) on every
-push, streaming a realistic ~520-token response through a fresh guard:
+The guard runs on every streamed token, so per-chunk cost has to be small next to
+the inter-token network gap. `bench/per-chunk.mjs` streams a realistic clean
+response through a fresh guard and reports the steady-state per-chunk cost; the
+committed baseline is in [`bench/results.txt`](bench/results.txt) and the
+benchmark workflow fails on a regression past 3x it. Reproduce with:
 
-| Metric | Result |
-|---|---|
-| Per-chunk overhead (happy path) | **~4.7 µs** |
-| Throughput | **~210k chunks/sec** |
-| Sample | 10.4M chunks (20k streams × 521 tokens) |
+```bash
+npm run build && node bench/per-chunk.mjs   # pure CPU, no API key
+```
 
-That is under 5 microseconds per token — roughly **3000× smaller** than the
-~15 ms a real provider takes between tokens, so the guard adds no perceptible
-latency. Reproduce with `node bench/per-chunk.mjs` (pure CPU, no API key). The
-accumulation window is bounded, so cost stays flat regardless of response
-length.
-
----
-
-## Stack
-
-- **Runtime** — Node.js 18+
-- **Types** — TypeScript
-- **Build** — tsup
-- **Tests** — Vitest
-- **License** — Apache 2.0
+Cost per chunk is bounded by a fixed scan window, so it stays flat regardless of
+response length.
 
 ---
 
 ## What Tripwire is NOT
 
-- **No LLM-judge layer.** Tripwire uses regex patterns, not a secondary model. It won't catch semantically equivalent lies that don't match a pattern.
-- **No false-positive rate published.** The abort threshold is tunable per pattern but no production hit/miss data is public.
-- **No per-user policy store.** Policies are global — if you need user-specific rules, you need a wrapping layer.
-- **Single-tenant in-process use.** Designed as a library imported into your API, not a standalone microservice with a policy DB.
+- **No LLM-judge layer.** Regex patterns, not a secondary model. It will not
+  catch semantically-equivalent violations that match no pattern.
+- **No published false-positive rate.** Thresholds are tunable per pattern; no
+  production hit/miss data is public.
+- **No policy DB or per-tenant rules.** The proxy applies one global rule set; a
+  consumer that needs per-user policy wraps it.
 
 ---
 
@@ -312,25 +283,11 @@ length.
 
 ```bash
 npm install
-npm test        # 2 test suites
-npm run build   # produces dist/index.js + dist/index.mjs
-npm run lint    # eslint
-npm run typecheck # TypeScript check
-```
-
----
-
-## Contributing
-
-Contributions welcome. Please open an issue first to discuss large changes.
-
-```bash
-git clone https://github.com/ykstorm/tripwire.git
-cd tripwire
-npm install
-# make changes, add tests
-npm test
-# PR against main
+npm test          # vitest
+npm run build     # dist/index.js + dist/index.mjs + dist/index.d.ts
+npm run lint
+npm run typecheck
+npm run smoke     # guard + custom patterns + checkResponse smoke checks
 ```
 
 ---

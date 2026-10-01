@@ -1,8 +1,9 @@
-// guardrail-proxy — pattern exports
+// tripwire - pattern exports
 
 export {
   CONTACT_LEAK_PATTERN,
   EMAIL_PATTERN,
+  PHONE_PATTERN,
 } from './contact'
 
 export {

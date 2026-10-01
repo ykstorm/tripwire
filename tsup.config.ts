@@ -7,8 +7,10 @@ export default defineConfig({
     'bin/tripwire-proxy': 'bin/tripwire-proxy.ts',
   },
   format: ['cjs', 'esm'],
-  dts: false,
+  // Type declarations for the published library entry only; the daemon and CLI
+  // are run, not imported, so they do not need a .d.ts.
+  dts: { entry: { index: 'src/index.ts' } },
   clean: true,
-  // express + openai stay external — they ship as runtime deps in the image.
+  // express + openai stay external - they ship as runtime deps in the image.
   external: ['express', 'openai'],
 })

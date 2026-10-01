@@ -1,26 +1,20 @@
 # Roadmap
 
-## v1.0 — Current: Core shipped
-- [x] `StreamingGuard` — token-by-token, 16-token window, abort/observe modes
-- [x] `checkResponse` — post-hoc full-text scan
-- [x] Hard-abort patterns: placeholder vars, phone numbers, emails, price manipulation
-- [x] Soft-observe patterns: markdown artifacts
-- [x] npm package — `@ykstormsorg/tripwire`
-- [x] 19 unit tests (12 streaming, 7 check)
+## Shipped
+- `StreamingGuard` - token-by-token guard with a cross-chunk hold-back buffer,
+  hard-abort and soft-observe modes.
+- `checkResponse` - post-hoc full-text audit over a rule table.
+- Hard-abort patterns: secret leaks, phone numbers, emails, business leaks.
+- Soft-observe patterns: markdown, placeholders, price/commission locks.
+- OpenAI-compatible guarded proxy with upstream pinning, rate limiting, and
+  secret-safe error handling.
+- npm package `@ykstormsorg/tripwire`.
 
-## v1.1 — Pattern improvements
-- [ ] PII regex refinement (handle international formats, handle split tokens across chunks better)
-- [ ] Custom pattern API — allow consumer to register their own patterns at runtime without rebuilding the package
+## Next
+- Pattern refinement: more international phone formats, tighter secret shapes.
+- A small metrics surface (violation counts by label) for the proxy.
 
-## v1.2 — Observability
-- [ ] Violation metrics: count + type per day, exportable for dashboards
-- [ ] Abort reason logging with pattern ID for audit trail
-
-## v2.0 — Multi-turn guard
-- [ ] Contextual patterns that track state across multiple turns (e.g., "once a price is mentioned, don't let them repeat it")
-- [ ] Session-level guard that wraps a conversation history, not just a single response
-
-## Not planned (open issue first)
-- Non-English pattern support
-- Integration with specific LLM provider SDKs (OpenAI, Anthropic first-party)
-- Dynamic pattern loading from external config
+## Not planned (open an issue first)
+- Semantic / LLM-judge matching.
+- Multi-turn stateful guards.
+- Per-tenant policy storage.
