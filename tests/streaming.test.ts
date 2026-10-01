@@ -27,13 +27,13 @@ describe('StreamingGuard', () => {
     it('hard-aborts on email address in stream', () => {
       const g = new StreamingGuard({ onAbort: () => { throw new Error('ABORT') } })
       let delivered = ''
-      for (const chunk of ['Hi ', 'reach ', 'me ', 'at ', 'balvir@homesty.ai']) {
+      for (const chunk of ['Hi ', 'reach ', 'me ', 'at ', 'user@example.com']) {
         try {
           g.onChunk(chunk)
           delivered += chunk
         } catch { break }
       }
-      expect(delivered).not.toContain('balvir@homesty.ai')
+      expect(delivered).not.toContain('user@example.com')
     })
 
     it('partial delivery — no silent failures', () => {
@@ -114,9 +114,9 @@ describe('StreamingGuard', () => {
     })
   })
 
-  describe('windowSize behavior', () => {
-    it('respects custom windowSize', () => {
-      const g = new StreamingGuard({ windowSize: 32 })
+  describe('holdback behavior', () => {
+    it('respects a custom holdback', () => {
+      const g = new StreamingGuard({ holdback: 8 })
       g.onChunk('The final price is ₹45,000 per sqft')
       expect(g.violations.some(v => v.includes('PRICE'))).toBe(true)
     })
