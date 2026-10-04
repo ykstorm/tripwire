@@ -23,6 +23,13 @@ describe('upstream URL pinning (SSRF guard)', () => {
     }
   })
 
+  it('does not mistake public hostnames that start like IPv6 prefixes for private addresses', () => {
+    expect(() => validateUpstreamUrl('https://fdic.gov/v1', strict)).not.toThrow()
+    expect(() => validateUpstreamUrl('https://fe80.example.com/v1', strict)).not.toThrow()
+    expect(() => validateUpstreamUrl('https://[fd00::1]/v1', strict)).toThrow(ConfigError)
+    expect(() => validateUpstreamUrl('https://[fe80::1]/v1', strict)).toThrow(ConfigError)
+  })
+
   it('requires https unless insecure is allowed', () => {
     expect(() => validateUpstreamUrl('http://api.openai.com/v1', strict)).toThrow(ConfigError)
     expect(() => validateUpstreamUrl('https://api.openai.com/v1', strict)).not.toThrow()
