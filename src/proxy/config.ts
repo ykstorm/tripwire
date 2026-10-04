@@ -65,7 +65,9 @@ function isPrivateHost(hostname: string): boolean {
   if (host === 'localhost' || host.endsWith('.localhost')) return true
   const v4 = ipv4Parts(host)
   if (v4) return isPrivateIPv4(v4)
-  // IPv6 literals.
+  // IPv6 literals only: a hostname never contains a colon, so names such as
+  // fdic.gov or fe80.example must not trip the link-local and ULA checks.
+  if (!host.includes(':')) return false
   if (host === '::1' || host === '::') return true
   if (host.startsWith('fe80') || host.startsWith('fc') || host.startsWith('fd')) return true
   const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host)
@@ -192,11 +194,12 @@ export function maxStarHeight(source: string): number {
     }
   }
 
-  // Character class - skip to the closing ], honoring escapes.
+  // Character class - skip to the closing ], honoring escapes. In JavaScript
+  // a ] right after [ or [^ closes the class ([] is empty, [^] is any char),
+  // unlike POSIX where it would be a literal.
   function parseClass(): number {
     i++
     if (source[i] === '^') i++
-    if (source[i] === ']') i++
     while (i < source.length && source[i] !== ']') {
       if (source[i] === '\\') i++
       i++
