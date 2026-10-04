@@ -56,7 +56,6 @@ export interface UpstreamClient {
 }
 export type UpstreamFactory = (apiKey: string, baseURL: string) => UpstreamClient
 
-/** Default factory: the real OpenAI SDK, pinned to the configured upstream. */
 const defaultUpstreamFactory: UpstreamFactory = (apiKey, baseURL) =>
   new OpenAI({ apiKey, baseURL, maxRetries: 0, timeout: 60_000 }) as unknown as UpstreamClient
 

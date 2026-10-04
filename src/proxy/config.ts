@@ -40,8 +40,6 @@ function envInt(value: string | undefined, fallback: number): number {
   return Math.floor(n)
 }
 
-// --- Upstream URL validation (SSRF guard) --------------------------------
-
 function ipv4Parts(host: string): number[] | null {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
   if (!m) return null
@@ -102,8 +100,6 @@ export function validateUpstreamUrl(
   }
   return url.toString().replace(/\/$/, '')
 }
-
-// --- Custom pattern parsing + ReDoS screening ----------------------------
 
 const FLAG_WHITELIST = /^[imsu]*$/
 
@@ -267,8 +263,6 @@ export function parseCustomPatterns(raw: string | undefined): CustomPattern[] {
     return { pattern: compiled, label: p.label, mode: p.mode }
   })
 }
-
-// --- Top-level config load -----------------------------------------------
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   const upstreamUrl = validateUpstreamUrl(
