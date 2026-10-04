@@ -165,41 +165,47 @@ export function maxStarHeight(source: string): number {
 
   function parseAtom(): number {
     const c = source[i]
-    if (c === '(') {
-      i++
-      // skip group prefix like ?: ?= ?! ?<name> ?<= ?<!
-      if (source[i] === '?') {
-        i++
-        if (source[i] === '<' && source[i + 1] !== '=' && source[i + 1] !== '!') {
-          const close = source.indexOf('>', i)
-          if (close !== -1) i = close + 1
-        } else {
-          // ?: ?= ?! ?<= ?<!
-          if (source[i] === '<') i++
-          i++
-        }
-      }
-      const inner = parseAlt()
-      if (source[i] === ')') i++
-      return inner
-    }
-    if (c === '[') {
-      // character class - skip to the closing ], honoring escapes
-      i++
-      if (source[i] === '^') i++
-      if (source[i] === ']') i++
-      while (i < source.length && source[i] !== ']') {
-        if (source[i] === '\\') i++
-        i++
-      }
-      if (source[i] === ']') i++
-      return 0
-    }
+    if (c === '(') return parseGroup()
+    if (c === '[') return parseClass()
     if (c === '\\') {
       i += 2
       return 0
     }
     i++
+    return 0
+  }
+
+  function parseGroup(): number {
+    i++
+    skipGroupPrefix()
+    const inner = parseAlt()
+    if (source[i] === ')') i++
+    return inner
+  }
+
+  // Skip a group prefix: ?<name> up to its '>', or one of ?: ?= ?! ?<= ?<!
+  function skipGroupPrefix(): void {
+    if (source[i] !== '?') return
+    i++
+    if (source[i] === '<' && source[i + 1] !== '=' && source[i + 1] !== '!') {
+      const close = source.indexOf('>', i)
+      if (close !== -1) i = close + 1
+    } else {
+      if (source[i] === '<') i++
+      i++
+    }
+  }
+
+  // Character class - skip to the closing ], honoring escapes.
+  function parseClass(): number {
+    i++
+    if (source[i] === '^') i++
+    if (source[i] === ']') i++
+    while (i < source.length && source[i] !== ']') {
+      if (source[i] === '\\') i++
+      i++
+    }
+    if (source[i] === ']') i++
     return 0
   }
 
