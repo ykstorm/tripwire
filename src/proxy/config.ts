@@ -28,7 +28,7 @@ export class ConfigError extends Error {
 }
 
 /** Truthy env flag - accepts 1/true/yes/on (case-insensitive), not just "true". */
-export function envFlag(value: string | undefined): boolean {
+function envFlag(value: string | undefined): boolean {
   if (!value) return false
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
 }

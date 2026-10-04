@@ -57,7 +57,7 @@ export interface UpstreamClient {
 export type UpstreamFactory = (apiKey: string, baseURL: string) => UpstreamClient
 
 /** Default factory: the real OpenAI SDK, pinned to the configured upstream. */
-export const defaultUpstreamFactory: UpstreamFactory = (apiKey, baseURL) =>
+const defaultUpstreamFactory: UpstreamFactory = (apiKey, baseURL) =>
   new OpenAI({ apiKey, baseURL, maxRetries: 0, timeout: 60_000 }) as unknown as UpstreamClient
 
 class BadRequestError extends Error {}

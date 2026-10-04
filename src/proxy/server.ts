@@ -5,7 +5,7 @@ import { makeChatHandler, type UpstreamFactory } from './handlers/chat.js'
 import { loadConfig, type ProxyConfig } from './config.js'
 import pkg from '../../package.json'
 
-export interface ProxyServerOptions {
+interface ProxyServerOptions {
   /** Override the upstream client factory (used by tests to inject a mock). */
   upstreamFactory?: UpstreamFactory
   /** Override the parsed config (defaults to loadConfig() from the environment). */
