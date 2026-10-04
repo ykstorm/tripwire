@@ -103,20 +103,25 @@ function validateBody(raw: unknown, config: ProxyConfig): Record<string, unknown
   if (typeof body.model !== 'string' || body.model.length === 0 || body.model.length > 200) {
     throw new BadRequestError('model must be a string of 1-200 characters')
   }
-  if (body.n !== undefined && body.n !== null) {
-    const n = Number(body.n)
-    if (!Number.isInteger(n) || n !== 1) {
-      throw new BadRequestError('n must be 1 - the guarded proxy does not support multiple choices')
-    }
-  }
-  const cap = config.defaultMaxTokens
-  const mt = body.max_tokens
-  if (typeof mt !== 'number' || !Number.isFinite(mt) || mt <= 0 || mt > cap) {
-    body.max_tokens = cap
-  }
+  assertSingleChoice(body.n)
+  body.max_tokens = effectiveMaxTokens(body.max_tokens, config.defaultMaxTokens)
   delete body.tripwire
   body.stream = true
   return body
+}
+
+function assertSingleChoice(n: unknown): void {
+  if (n !== undefined && n !== null && Number(n) !== 1) {
+    throw new BadRequestError('n must be 1 - the guarded proxy does not support multiple choices')
+  }
+}
+
+/** The caller's max_tokens when it is a positive finite number within the cap, otherwise the cap. */
+function effectiveMaxTokens(requested: unknown, cap: number): number {
+  if (typeof requested !== 'number' || !Number.isFinite(requested) || requested <= 0 || requested > cap) {
+    return cap
+  }
+  return requested
 }
 
 function auxText(delta: Delta): string {
