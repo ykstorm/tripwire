@@ -28,7 +28,7 @@ export class ConfigError extends Error {
 }
 
 /** Truthy env flag - accepts 1/true/yes/on (case-insensitive), not just "true". */
-export function envFlag(value: string | undefined): boolean {
+function envFlag(value: string | undefined): boolean {
   if (!value) return false
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
 }
@@ -39,8 +39,6 @@ function envInt(value: string | undefined, fallback: number): number {
   if (!Number.isFinite(n) || n < 0) throw new ConfigError(`invalid integer env value: ${value}`)
   return Math.floor(n)
 }
-
-// --- Upstream URL validation (SSRF guard) --------------------------------
 
 function ipv4Parts(host: string): number[] | null {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
@@ -103,8 +101,6 @@ export function validateUpstreamUrl(
   return url.toString().replace(/\/$/, '')
 }
 
-// --- Custom pattern parsing + ReDoS screening ----------------------------
-
 const FLAG_WHITELIST = /^[imsu]*$/
 
 interface RawPattern {
@@ -165,41 +161,47 @@ export function maxStarHeight(source: string): number {
 
   function parseAtom(): number {
     const c = source[i]
-    if (c === '(') {
-      i++
-      // skip group prefix like ?: ?= ?! ?<name> ?<= ?<!
-      if (source[i] === '?') {
-        i++
-        if (source[i] === '<' && source[i + 1] !== '=' && source[i + 1] !== '!') {
-          const close = source.indexOf('>', i)
-          if (close !== -1) i = close + 1
-        } else {
-          // ?: ?= ?! ?<= ?<!
-          if (source[i] === '<') i++
-          i++
-        }
-      }
-      const inner = parseAlt()
-      if (source[i] === ')') i++
-      return inner
-    }
-    if (c === '[') {
-      // character class - skip to the closing ], honoring escapes
-      i++
-      if (source[i] === '^') i++
-      if (source[i] === ']') i++
-      while (i < source.length && source[i] !== ']') {
-        if (source[i] === '\\') i++
-        i++
-      }
-      if (source[i] === ']') i++
-      return 0
-    }
+    if (c === '(') return parseGroup()
+    if (c === '[') return parseClass()
     if (c === '\\') {
       i += 2
       return 0
     }
     i++
+    return 0
+  }
+
+  function parseGroup(): number {
+    i++
+    skipGroupPrefix()
+    const inner = parseAlt()
+    if (source[i] === ')') i++
+    return inner
+  }
+
+  // Skip a group prefix: ?<name> up to its '>', or one of ?: ?= ?! ?<= ?<!
+  function skipGroupPrefix(): void {
+    if (source[i] !== '?') return
+    i++
+    if (source[i] === '<' && source[i + 1] !== '=' && source[i + 1] !== '!') {
+      const close = source.indexOf('>', i)
+      if (close !== -1) i = close + 1
+    } else {
+      if (source[i] === '<') i++
+      i++
+    }
+  }
+
+  // Character class - skip to the closing ], honoring escapes.
+  function parseClass(): number {
+    i++
+    if (source[i] === '^') i++
+    if (source[i] === ']') i++
+    while (i < source.length && source[i] !== ']') {
+      if (source[i] === '\\') i++
+      i++
+    }
+    if (source[i] === ']') i++
     return 0
   }
 
@@ -261,8 +263,6 @@ export function parseCustomPatterns(raw: string | undefined): CustomPattern[] {
     return { pattern: compiled, label: p.label, mode: p.mode }
   })
 }
-
-// --- Top-level config load -----------------------------------------------
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   const upstreamUrl = validateUpstreamUrl(

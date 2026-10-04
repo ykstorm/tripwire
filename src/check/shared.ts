@@ -72,7 +72,7 @@ export const KNOWN_AMENITIES = new Set([
   'yes bank', 'bob', 'bank of baroda',
 ])
 
-export const HINGLISH_MARKERS = new Set([
+const HINGLISH_MARKERS = new Set([
   'hai', 'kya', 'kar', 'kaise', 'kaha', 'mein', 'ka', 'ki', 'ke',
   'ko', 'se', 'par', 'bhi', 'nahi', 'haan', 'dekh', 'dekho', 'sach',
   'bhai', 'bas', 'sirf', 'matra',
@@ -112,7 +112,7 @@ export function wordCapFor(persona: Persona): number {
   return 100
 }
 
-export function parseCards(text: string): ParsedCard[] {
+function parseCards(text: string): ParsedCard[] {
   const cards: ParsedCard[] = []
   const re = /<!--CARD:(\{[\s\S]*?\})-->/g
   let cardMatch: RegExpExecArray | null

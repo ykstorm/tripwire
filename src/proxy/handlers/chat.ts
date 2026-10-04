@@ -56,8 +56,7 @@ export interface UpstreamClient {
 }
 export type UpstreamFactory = (apiKey: string, baseURL: string) => UpstreamClient
 
-/** Default factory: the real OpenAI SDK, pinned to the configured upstream. */
-export const defaultUpstreamFactory: UpstreamFactory = (apiKey, baseURL) =>
+const defaultUpstreamFactory: UpstreamFactory = (apiKey, baseURL) =>
   new OpenAI({ apiKey, baseURL, maxRetries: 0, timeout: 60_000 }) as unknown as UpstreamClient
 
 class BadRequestError extends Error {}
@@ -103,20 +102,47 @@ function validateBody(raw: unknown, config: ProxyConfig): Record<string, unknown
   if (typeof body.model !== 'string' || body.model.length === 0 || body.model.length > 200) {
     throw new BadRequestError('model must be a string of 1-200 characters')
   }
-  if (body.n !== undefined && body.n !== null) {
-    const n = Number(body.n)
-    if (!Number.isInteger(n) || n !== 1) {
-      throw new BadRequestError('n must be 1 - the guarded proxy does not support multiple choices')
-    }
-  }
-  const cap = config.defaultMaxTokens
-  const mt = body.max_tokens
-  if (typeof mt !== 'number' || !Number.isFinite(mt) || mt <= 0 || mt > cap) {
-    body.max_tokens = cap
-  }
+  assertSingleChoice(body.n)
+  body.max_tokens = effectiveMaxTokens(body.max_tokens, config.defaultMaxTokens)
   delete body.tripwire
   body.stream = true
   return body
+}
+
+function assertSingleChoice(n: unknown): void {
+  if (n !== undefined && n !== null && Number(n) !== 1) {
+    throw new BadRequestError('n must be 1 - the guarded proxy does not support multiple choices')
+  }
+}
+
+/** The caller's max_tokens when it is a positive finite number within the cap, otherwise the cap. */
+function effectiveMaxTokens(requested: unknown, cap: number): number {
+  if (typeof requested !== 'number' || !Number.isFinite(requested) || requested <= 0 || requested > cap) {
+    return cap
+  }
+  return requested
+}
+
+/**
+ * Authenticate and validate before any SSE headers are sent, so a rejection is
+ * still a plain JSON 401/400. Returns undefined once it has replied.
+ */
+function acceptRequest(
+  req: Request,
+  res: Response,
+  config: ProxyConfig
+): { apiKey: string; body: Record<string, unknown> } | undefined {
+  try {
+    const apiKey = authenticate(req, config)
+    return { apiKey, body: validateBody(req.body, config) }
+  } catch (err) {
+    if (err instanceof UnauthorizedError) {
+      res.status(401).json({ error: 'missing_auth' })
+    } else {
+      res.status(400).json({ error: 'invalid_request', detail: (err as Error).message })
+    }
+    return undefined
+  }
 }
 
 function auxText(delta: Delta): string {
@@ -140,162 +166,207 @@ function passthroughDelta(delta: Delta): Delta {
   return out
 }
 
+/** Guard state for one request: one content guard and one aux guard per choice index. */
+interface ScanState {
+  contentGuards: Map<number, StreamingGuard>
+  auxGuards: Map<number, StreamingGuard>
+  guardFor: (map: Map<number, StreamingGuard>, index: number) => StreamingGuard
+  contentChars: number
+  maxStreamChars: number
+}
+
+function createScanState(config: ProxyConfig): ScanState {
+  const firedLabels = new Set<string>()
+  const onViolate = (violation: string, label: string): void => {
+    if (firedLabels.has(label)) return
+    firedLabels.add(label)
+    logSoft(violation)
+  }
+  const makeGuard = (): StreamingGuard =>
+    createStreamingGuard({ holdback: config.holdback, patterns: config.customPatterns, onViolate })
+  const guardFor = (map: Map<number, StreamingGuard>, index: number): StreamingGuard => {
+    let g = map.get(index)
+    if (!g) {
+      g = makeGuard()
+      map.set(index, g)
+    }
+    return g
+  }
+  return {
+    contentGuards: new Map(),
+    auxGuards: new Map(),
+    guardFor,
+    contentChars: 0,
+    maxStreamChars: config.maxStreamChars,
+  }
+}
+
+/** Run one upstream choice through its guards and return the choice to forward, if any. */
+function scanChoice(choice: Choice, scan: ScanState): Choice | undefined {
+  const index = choice.index ?? 0
+  const delta = choice.delta ?? {}
+
+  const aux = auxText(delta)
+  if (aux) scan.guardFor(scan.auxGuards, index).onChunk(aux)
+
+  const content = typeof delta.content === 'string' ? delta.content : ''
+  scan.contentChars += content.length
+  if (scan.contentChars > scan.maxStreamChars) throw new StreamTooLargeError(scan.maxStreamChars)
+
+  const guard = scan.guardFor(scan.contentGuards, index)
+  let released = guard.onChunk(content)
+  if (choice.finish_reason) released += guard.flush()
+
+  return forwardedChoice(index, delta, released, choice.finish_reason)
+}
+
+function forwardedChoice(
+  index: number,
+  delta: Delta,
+  released: string,
+  finishReason: string | null | undefined
+): Choice | undefined {
+  const outDelta = passthroughDelta(delta)
+  if (released) outDelta.content = released
+  const hasDelta = Object.keys(outDelta).length > 0
+  if (hasDelta || finishReason) return { index, delta: outDelta, finish_reason: finishReason ?? null }
+  return undefined
+}
+
+/** How the stream ended, for the rule_trip event and the request log line. */
+interface StreamOutcome {
+  tokensStreamed: number
+  aborted: boolean
+  rule?: string
+  detail?: string
+}
+
+async function streamGuarded(
+  upstream: AsyncIterable<UpstreamChunk>,
+  res: Response,
+  config: ProxyConfig,
+  outcome: StreamOutcome
+): Promise<void> {
+  const scan = createScanState(config)
+  for await (const chunk of upstream) {
+    const outChoices: Choice[] = []
+    for (const choice of chunk.choices ?? []) {
+      const out = scanChoice(choice, scan)
+      if (out) outChoices.push(out)
+    }
+
+    if (outChoices.length > 0) {
+      await writeSSE(res, {
+        id: chunk.id,
+        object: chunk.object,
+        created: chunk.created,
+        model: chunk.model,
+        system_fingerprint: chunk.system_fingerprint,
+        choices: outChoices,
+      })
+      outcome.tokensStreamed++
+    }
+  }
+
+  // Release any held-back tails before closing.
+  for (const [index, guard] of scan.contentGuards) {
+    const tail = guard.flush()
+    if (!tail) continue
+    await writeSSE(res, { object: 'chat.completion.chunk', choices: [{ index, delta: { content: tail }, finish_reason: null }] })
+    outcome.tokensStreamed++
+  }
+
+  await writeDone(res)
+  res.end()
+}
+
+async function endStreamOnError(
+  err: unknown,
+  res: Response,
+  ac: AbortController,
+  outcome: StreamOutcome
+): Promise<void> {
+  if (err instanceof GuardAbortError) {
+    outcome.aborted = true
+    outcome.rule = err.rule
+    ac.abort()
+    await writeSSE(res, {
+      error: 'rule_trip',
+      violation: err.message,
+      rule: err.rule,
+      tokens_streamed: outcome.tokensStreamed,
+    })
+    res.end()
+  } else if (err instanceof StreamTooLargeError || err instanceof ChunkTooLargeError) {
+    ac.abort()
+    await writeSSE(res, { error: 'stream_too_large' })
+    res.end()
+  } else if (ac.signal.aborted) {
+    // Client disconnect or stream-time limit - nothing more to send.
+    res.end()
+  } else if (!res.headersSent) {
+    res.status(502).json({ error: 'upstream_failure' })
+  } else {
+    await writeSSE(res, { error: 'upstream_failure' })
+    res.end()
+  }
+  if (!(err instanceof GuardAbortError)) {
+    outcome.detail = redactedDetail(err)
+  }
+}
+
+/** Log a failed upstream open and answer 502. The redacted detail goes to the log only. */
+function replyUpstreamFailure(err: unknown, res: Response, startedAt: number, model: string): void {
+  const status = (err as { status?: number }).status
+  logRequest({
+    ts: new Date(startedAt).toISOString(),
+    route: '/v1/chat/completions',
+    model,
+    latencyMs: Date.now() - startedAt,
+    tokensStreamed: 0,
+    aborted: false,
+    status: 502,
+    detail: redactedDetail(err),
+  })
+  res.status(502).json({ error: 'upstream_failure', upstream_status: status })
+}
+
+function redactedDetail(err: unknown): string {
+  return redact(String((err as Error).message ?? err))
+}
+
 export function makeChatHandler(
   config: ProxyConfig,
   upstreamFactory: UpstreamFactory = defaultUpstreamFactory
 ) {
   return async function chatHandler(req: Request, res: Response): Promise<void> {
     const startedAt = Date.now()
-    let model: string | undefined
-    let tokensStreamed = 0
-    let aborted = false
-    let firedRule: string | undefined
-
-    // --- Auth + body validation (before any SSE headers). ---
-    let apiKey: string
-    let body: Record<string, unknown>
-    try {
-      apiKey = authenticate(req, config)
-      body = validateBody(req.body, config)
-      model = body.model as string
-    } catch (err) {
-      if (err instanceof UnauthorizedError) {
-        res.status(401).json({ error: 'missing_auth' })
-      } else {
-        res.status(400).json({ error: 'invalid_request', detail: (err as Error).message })
-      }
-      return
-    }
+    const accepted = acceptRequest(req, res, config)
+    if (!accepted) return
+    const { apiKey, body } = accepted
+    const model = body.model as string
 
     const ac = new AbortController()
     res.on('close', () => ac.abort())
     const timer = setTimeout(() => ac.abort(), config.maxStreamMs)
     ;(timer as { unref?: () => void }).unref?.()
 
-    // --- Open the upstream stream. ---
     let upstream: AsyncIterable<UpstreamChunk>
     try {
       const client = upstreamFactory(apiKey, config.upstreamUrl)
       upstream = await client.chat.completions.create(body, { signal: ac.signal })
     } catch (err) {
       clearTimeout(timer)
-      const status = (err as { status?: number }).status
-      logRequest({
-        ts: new Date(startedAt).toISOString(),
-        route: '/v1/chat/completions',
-        model,
-        latencyMs: Date.now() - startedAt,
-        tokensStreamed: 0,
-        aborted: false,
-        status: 502,
-        detail: redact(String((err as Error).message ?? err)),
-      })
-      res.status(502).json({ error: 'upstream_failure', upstream_status: status })
+      replyUpstreamFailure(err, res, startedAt, model)
       return
     }
 
-    // --- Stream through the guard. One guard per choice for content + aux. ---
-    const contentGuards = new Map<number, StreamingGuard>()
-    const auxGuards = new Map<number, StreamingGuard>()
-    const firedLabels = new Set<string>()
-    let contentChars = 0
-    let errorDetail: string | undefined
-
-    const onViolate = (violation: string, label: string): void => {
-      if (firedLabels.has(label)) return
-      firedLabels.add(label)
-      logSoft(violation)
-    }
-    const makeGuard = (): StreamingGuard =>
-      createStreamingGuard({ holdback: config.holdback, patterns: config.customPatterns, onViolate })
-    const guardFor = (map: Map<number, StreamingGuard>, index: number): StreamingGuard => {
-      let g = map.get(index)
-      if (!g) {
-        g = makeGuard()
-        map.set(index, g)
-      }
-      return g
-    }
-
+    const outcome: StreamOutcome = { tokensStreamed: 0, aborted: false }
     initSSE(res)
-
     try {
-      for await (const chunk of upstream) {
-        const outChoices: Choice[] = []
-        for (const choice of chunk.choices ?? []) {
-          const index = choice.index ?? 0
-          const delta = choice.delta ?? {}
-
-          const aux = auxText(delta)
-          if (aux) guardFor(auxGuards, index).onChunk(aux)
-
-          const content = typeof delta.content === 'string' ? delta.content : ''
-          contentChars += content.length
-          if (contentChars > config.maxStreamChars) throw new StreamTooLargeError(config.maxStreamChars)
-
-          const guard = guardFor(contentGuards, index)
-          let released = guard.onChunk(content)
-          if (choice.finish_reason) released += guard.flush()
-
-          const outDelta = passthroughDelta(delta)
-          if (released) outDelta.content = released
-          const hasDelta = Object.keys(outDelta).length > 0
-          if (hasDelta || choice.finish_reason) {
-            outChoices.push({ index, delta: outDelta, finish_reason: choice.finish_reason ?? null })
-          }
-        }
-
-        if (outChoices.length > 0) {
-          await writeSSE(res, {
-            id: chunk.id,
-            object: chunk.object,
-            created: chunk.created,
-            model: chunk.model,
-            system_fingerprint: chunk.system_fingerprint,
-            choices: outChoices,
-          })
-          tokensStreamed++
-        }
-      }
-
-      // Release any held-back tails before closing.
-      for (const [index, guard] of contentGuards) {
-        const tail = guard.flush()
-        if (!tail) continue
-        await writeSSE(res, { object: 'chat.completion.chunk', choices: [{ index, delta: { content: tail }, finish_reason: null }] })
-        tokensStreamed++
-      }
-
-      await writeDone(res)
-      res.end()
+      await streamGuarded(upstream, res, config, outcome)
     } catch (err) {
-      if (err instanceof GuardAbortError) {
-        aborted = true
-        firedRule = err.rule
-        ac.abort()
-        await writeSSE(res, {
-          error: 'rule_trip',
-          violation: err.message,
-          rule: err.rule,
-          tokens_streamed: tokensStreamed,
-        })
-        res.end()
-      } else if (err instanceof StreamTooLargeError || err instanceof ChunkTooLargeError) {
-        ac.abort()
-        await writeSSE(res, { error: 'stream_too_large' })
-        res.end()
-      } else if (ac.signal.aborted) {
-        // Client disconnect or stream-time limit - nothing more to send.
-        res.end()
-      } else if (!res.headersSent) {
-        res.status(502).json({ error: 'upstream_failure' })
-      } else {
-        await writeSSE(res, { error: 'upstream_failure' })
-        res.end()
-      }
-      if (!(err instanceof GuardAbortError)) {
-        errorDetail = redact(String((err as Error).message ?? err))
-      }
+      await endStreamOnError(err, res, ac, outcome)
     } finally {
       clearTimeout(timer)
       logRequest({
@@ -303,11 +374,11 @@ export function makeChatHandler(
         route: '/v1/chat/completions',
         model,
         latencyMs: Date.now() - startedAt,
-        tokensStreamed,
-        aborted,
-        rule: firedRule,
-        status: aborted ? 200 : res.statusCode,
-        detail: errorDetail,
+        tokensStreamed: outcome.tokensStreamed,
+        aborted: outcome.aborted,
+        rule: outcome.rule,
+        status: outcome.aborted ? 200 : res.statusCode,
+        detail: outcome.detail,
       })
     }
   }
