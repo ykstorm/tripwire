@@ -2,7 +2,8 @@
 //
 // Forwards the caller's request to the pinned upstream using the caller's Bearer
 // token, runs every streamed delta field through the hold-back guard, and
-// forwards only the text the guard releases (synthesized as OpenAI delta chunks).
+// forwards only the text the guards release, for content and for tool-call,
+// refusal and function-call deltas alike (synthesized as OpenAI delta chunks).
 // On a hard-abort trip it emits a `rule_trip` SSE event and closes the stream.
 
 import { timingSafeEqual } from 'crypto'
@@ -157,19 +158,24 @@ function auxText(delta: Delta): string {
   return parts.join('\n')
 }
 
-function passthroughDelta(delta: Delta): Delta {
-  const out: Delta = {}
-  if (delta.role) out.role = delta.role
-  if (Array.isArray(delta.tool_calls)) out.tool_calls = delta.tool_calls
-  if (delta.function_call) out.function_call = delta.function_call
-  if (typeof delta.refusal === 'string') out.refusal = delta.refusal
-  return out
+/** A non-content delta waiting for the aux guard to release the text it carries. */
+interface HeldAux {
+  delta: Delta
+  chars: number
+}
+
+/** Per choice index: deltas held back until the aux guard releases their text. */
+interface AuxQueue {
+  held: HeldAux[]
+  releasedChars: number
+  emittedChars: number
 }
 
 /** Guard state for one request: one content guard and one aux guard per choice index. */
 interface ScanState {
   contentGuards: Map<number, StreamingGuard>
   auxGuards: Map<number, StreamingGuard>
+  auxQueues: Map<number, AuxQueue>
   guardFor: (map: Map<number, StreamingGuard>, index: number) => StreamingGuard
   contentChars: number
   maxStreamChars: number
@@ -195,9 +201,61 @@ function createScanState(config: ProxyConfig): ScanState {
   return {
     contentGuards: new Map(),
     auxGuards: new Map(),
+    auxQueues: new Map(),
     guardFor,
     contentChars: 0,
     maxStreamChars: config.maxStreamChars,
+  }
+}
+
+/**
+ * Tool-call arguments, refusals and function-call arguments get the same
+ * hold-back as content: a delta is forwarded only once the aux guard has
+ * released all the text up to and including it. Deltas are atomic, so one
+ * that straddles the release boundary waits for the next release. On a trip
+ * the guard throws and whatever is still held is never sent.
+ */
+function releaseAux(delta: Delta, aux: string, finished: boolean, index: number, scan: ScanState): Delta[] {
+  const guard = scan.guardFor(scan.auxGuards, index)
+  let queue = scan.auxQueues.get(index)
+  if (!queue) {
+    queue = { held: [], releasedChars: 0, emittedChars: 0 }
+    scan.auxQueues.set(index, queue)
+  }
+  let released = guard.onChunk(aux)
+  if (finished) released += guard.flush()
+  queue.releasedChars += released.length
+  queue.held.push({ delta: auxDelta(delta), chars: aux.length })
+  const out: Delta[] = []
+  while (queue.held.length > 0 && queue.emittedChars + queue.held[0].chars <= queue.releasedChars) {
+    const next = queue.held.shift() as HeldAux
+    queue.emittedChars += next.chars
+    out.push(next.delta)
+  }
+  return out
+}
+
+function auxDelta(delta: Delta): Delta {
+  const out: Delta = {}
+  if (Array.isArray(delta.tool_calls)) out.tool_calls = delta.tool_calls
+  if (delta.function_call) out.function_call = delta.function_call
+  if (typeof delta.refusal === 'string') out.refusal = delta.refusal
+  return out
+}
+
+/** Fold released aux deltas into one: clients accumulate these fields by index or by concatenation. */
+function mergeAux(target: Delta, parts: Delta[]): void {
+  for (const part of parts) {
+    if (part.tool_calls) target.tool_calls = [...(target.tool_calls ?? []), ...part.tool_calls]
+    if (part.refusal !== undefined) target.refusal = (target.refusal ?? '') + part.refusal
+    if (part.function_call) {
+      const prev = target.function_call ?? {}
+      target.function_call = {
+        ...prev,
+        ...(part.function_call.name !== undefined ? { name: part.function_call.name } : {}),
+        arguments: (prev.arguments ?? '') + (part.function_call.arguments ?? ''),
+      }
+    }
   }
 }
 
@@ -205,9 +263,12 @@ function createScanState(config: ProxyConfig): ScanState {
 function scanChoice(choice: Choice, scan: ScanState): Choice | undefined {
   const index = choice.index ?? 0
   const delta = choice.delta ?? {}
+  const finished = Boolean(choice.finish_reason)
 
   const aux = auxText(delta)
-  if (aux) scan.guardFor(scan.auxGuards, index).onChunk(aux)
+  const auxOut = aux ? releaseAux(delta, aux, finished, index, scan) : []
+  // A finish with nothing new to scan still releases whatever the aux guard holds.
+  if (!aux && finished && scan.auxQueues.get(index)?.held.length) auxOut.push(...releaseAux({}, '', true, index, scan))
 
   const content = typeof delta.content === 'string' ? delta.content : ''
   scan.contentChars += content.length
@@ -215,19 +276,22 @@ function scanChoice(choice: Choice, scan: ScanState): Choice | undefined {
 
   const guard = scan.guardFor(scan.contentGuards, index)
   let released = guard.onChunk(content)
-  if (choice.finish_reason) released += guard.flush()
+  if (finished) released += guard.flush()
 
-  return forwardedChoice(index, delta, released, choice.finish_reason)
+  return forwardedChoice(index, delta, released, auxOut, choice.finish_reason)
 }
 
 function forwardedChoice(
   index: number,
   delta: Delta,
   released: string,
+  auxOut: Delta[],
   finishReason: string | null | undefined
 ): Choice | undefined {
-  const outDelta = passthroughDelta(delta)
+  const outDelta: Delta = {}
+  if (delta.role) outDelta.role = delta.role
   if (released) outDelta.content = released
+  mergeAux(outDelta, auxOut)
   const hasDelta = Object.keys(outDelta).length > 0
   if (hasDelta || finishReason) return { index, delta: outDelta, finish_reason: finishReason ?? null }
   return undefined
@@ -328,7 +392,7 @@ function replyUpstreamFailure(err: unknown, res: Response, startedAt: number, mo
     status: 502,
     detail: redactedDetail(err),
   })
-  res.status(502).json({ error: 'upstream_failure', upstream_status: status })
+  res.status(502).json({ error: 'upstream_failure', upstream_status: status ?? null })
 }
 
 function redactedDetail(err: unknown): string {

@@ -25,6 +25,32 @@ describe('per-choice buffering + scanning every delta field', () => {
         const trip = tripOf(res.text)
         expect(trip?.rule).toBe('CONTACT_LEAK')
         expect(res.text).not.toContain('data: [DONE]')
+        // The first half was held back, not forwarded ahead of the trip.
+        expect(res.text).not.toContain('98765')
+      })
+  })
+
+  it('forwards benign tool_call deltas once the aux guard releases them, with arguments intact', () => {
+    const chunks: UpstreamChunk[] = [
+      { choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call_1', function: { name: 'lookup', arguments: '{"city":' } }] } }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '"Mumbai"}' } }] } }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+    ]
+    const app = createProxyServer({ config: makeConfig(), upstreamFactory: mockUpstream(chunks) })
+    return request(app)
+      .post('/v1/chat/completions')
+      .set(AUTH)
+      .send(BODY)
+      .then((res) => {
+        expect(tripOf(res.text)).toBeUndefined()
+        const events = parseSSE(res.text) as Array<{ choices?: Array<{ delta: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> }>
+        const args = events
+          .flatMap((e) => e.choices ?? [])
+          .flatMap((c) => c.delta.tool_calls ?? [])
+          .map((tc) => tc.function?.arguments ?? '')
+          .join('')
+        expect(args).toBe('{"city":"Mumbai"}')
+        expect(res.text).toContain('data: [DONE]')
       })
   })
 

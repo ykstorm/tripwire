@@ -17,7 +17,7 @@ describe('custom pattern loading is fail-fast', () => {
   it('reads [] and [^] as JavaScript does, so a nested quantifier after them is still caught', () => {
     expect(maxStarHeight('[^](a+)+$')).toBeGreaterThan(1)
     expect(maxStarHeight('[](a+)+$')).toBeGreaterThan(1)
-    expect(maxStarHeight('[\]]+')).toBe(1)
+    expect(maxStarHeight('[\\]]+')).toBe(1)
   })
 
   it('rejects a nested-quantifier pattern (star height > 1)', () => {

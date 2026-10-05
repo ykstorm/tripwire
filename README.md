@@ -9,8 +9,9 @@
 Tripwire watches an LLM token stream and aborts the response the moment a rule
 trips, before the offending text reaches the user. It ships as a library you
 import at your call site and as an OpenAI-compatible proxy you can run as a
-sidecar. A post-hoc audit mode (`checkResponse`) shares the same pattern set for
-batch review of completed responses.
+sidecar. A post-hoc audit mode (`checkResponse`) runs the content rules over a completed
+response for batch review; the secret-key pattern belongs to the streaming guard
+and the log redactor, not to the audit.
 
 ## What it is, plainly
 
@@ -57,8 +58,9 @@ returns releasable text (all but the held-back tail); flush() drains the tail
 **StreamingGuard** wraps a token stream. Call `onChunk(token)` per token and
 forward what it returns; call `flush()` before you close the stream.
 
-**checkResponse** runs the full pattern set against a completed response and
-returns its violations without throwing.
+**checkResponse** runs the content rules (contact, booking, fabrication, format,
+language, placement and the business leaks) against a completed response and
+returns its violations without throwing. It does not run the secret-key pattern.
 
 ---
 
@@ -74,8 +76,8 @@ returns its violations without throwing.
 - `PLACEHOLDER_LEAK` — unsubstituted template variables such as `[PROJECT_A]`
 - `PRICE_COMMITMENT_LEAK` / `COMMISSION_DISCUSSION_LEAK` — committed discounts or
   quoted commission percentages
-- `NO_MARKDOWN` — markdown bullets, bold, and headers (fenced code blocks are
-  explicitly excluded)
+- `NO_MARKDOWN` — markdown bullets, bold, and headers. The ``` fence markers
+  themselves do not match, but a bullet or header line inside a fence does
 
 Hard-abort is reserved for irreversible leaks. Promote an observe pattern or add
 your own with `TRIPWIRE_CUSTOM_PATTERNS`.

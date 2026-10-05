@@ -17,9 +17,18 @@ function rateLimiter(rpm: number) {
   const refillPerMs = rpm / 60_000
   const buckets = new Map<string, { tokens: number; last: number }>()
   const retryAfter = Math.max(1, Math.ceil(60 / rpm))
+  // A bucket that has been idle for a minute is full again, so it carries no
+  // state worth keeping; dropping it bounds memory by concurrent callers.
+  let lastSweep = Date.now()
+  const sweep = (now: number): void => {
+    if (now - lastSweep < 60_000) return
+    lastSweep = now
+    for (const [key, b] of buckets) if (now - b.last >= 60_000) buckets.delete(key)
+  }
   return (req: Request, res: Response, next: NextFunction): void => {
     const ip = req.ip ?? 'unknown'
     const now = Date.now()
+    sweep(now)
     const bucket = buckets.get(ip) ?? { tokens: rpm, last: now }
     bucket.tokens = Math.min(rpm, bucket.tokens + (now - bucket.last) * refillPerMs)
     bucket.last = now
