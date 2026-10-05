@@ -12,19 +12,16 @@ are already on the user's screen. Tripwire matches the accumulated stream on eve
 chunk and can abort before the matched text is released, so the visible-bad-content
 window closes.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant U as User
-    participant T as Tripwire
-    participant L as Upstream LLM
-    U->>T: prompt
-    T->>L: prompt
-    L-->>T: token "call " "98765" "43210"
-    Note over T: normalized buffer matches CONTACT_LEAK
-    T->>L: abort upstream
-    T-->>U: safe prefix only, then {"error":"rule_trip",...}
-```
+A phone number split across three chunks:
+
+1. The user's prompt goes through Tripwire to the upstream LLM.
+2. The upstream streams `"call "`, `"98765"` and `"43210"`. Tripwire appends
+   each chunk to its buffer and holds back the last 48 characters.
+3. With the third chunk the normalized buffer matches `CONTACT_LEAK`.
+4. Tripwire aborts the upstream request.
+5. The user receives only the safe prefix the guard had already released (none
+   here, since all 15 characters were still held back), then
+   `{"error":"rule_trip",...}`.
 
 ## The hold-back buffer
 
@@ -68,13 +65,16 @@ function. It rejects input over `MAX_CHECK_CHARS` (100k) with `InputTooLargeErro
 The proxy (`src/proxy/`) is an Express app exposing `GET /healthz` and
 `POST /v1/chat/completions`.
 
-```mermaid
-graph LR
-    Client[OpenAI client] -->|Bearer caller-key| P[Tripwire proxy :8080]
-    P -->|pinned upstream| U[OpenAI-compatible API]
-    U -->|stream| P
-    P -->|released deltas / rule_trip| Client
-```
+The path of one request:
+
+1. An OpenAI client calls the proxy (port 8080 by default) with its own API key
+   as the Bearer token.
+2. The proxy sends the request, with that key, to the pinned OpenAI-compatible
+   upstream.
+3. The upstream streams its response back to the proxy.
+4. The proxy forwards to the client only what its guards release (content,
+   refusal, tool-call and function-call deltas), or a `rule_trip` event when a
+   rule trips.
 
 Per request the handler (`src/proxy/handlers/chat.ts`):
 
