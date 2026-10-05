@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest'
 import { checkResponse } from '../src'
 
+describe('checkResponse is stateless between calls', () => {
+  it('reports the same fabricated stat on every call', () => {
+    const text = 'Our company was founded in 1998 and has delivered 50 projects since.'
+    const labels = (): string[] => checkResponse(text).violations.filter((v) => v.includes('FABRICATED_STAT'))
+    const first = labels()
+    expect(first.length).toBeGreaterThan(0)
+    expect(labels()).toEqual(first)
+    expect(labels()).toEqual(first)
+  })
+})
+
 describe('checkResponse', () => {
   it('passes clean content', () => {
     const result = checkResponse('Hello, how can I help you today?')

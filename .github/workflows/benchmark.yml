@@ -21,6 +21,8 @@ jobs:
       - name: Fail on >3x regression over the committed baseline
         run: node bench/check-regression.mjs bench/results.txt bench/current.txt
       - uses: actions/upload-artifact@v4
+        # The numbers matter most when the regression gate fails.
+        if: always()
         with:
           name: per-chunk
           path: bench/current.txt

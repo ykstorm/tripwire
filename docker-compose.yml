@@ -13,7 +13,7 @@ services:
     environment:
       # Pinned upstream (defaults to https://api.openai.com/v1).
       TRIPWIRE_UPSTREAM_URL: "${TRIPWIRE_UPSTREAM_URL:-https://api.openai.com/v1}"
-      # Require this token as the X-Tripwire-Token header on every request.
+      # Require this token as the X-Tripwire-Token header on chat completions; /healthz stays open.
       TRIPWIRE_PROXY_TOKEN: "${TRIPWIRE_PROXY_TOKEN:-}"
       TRIPWIRE_LOG_LEVEL: "info"
     ports:

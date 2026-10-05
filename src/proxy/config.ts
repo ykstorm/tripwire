@@ -69,13 +69,26 @@ function isPrivateHost(hostname: string): boolean {
   // fdic.gov or fe80.example must not trip the link-local and ULA checks.
   if (!host.includes(':')) return false
   if (host === '::1' || host === '::') return true
-  if (host.startsWith('fe80') || host.startsWith('fc') || host.startsWith('fd')) return true
-  const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host)
-  if (mapped) {
-    const parts = ipv4Parts(mapped[1])
-    if (parts) return isPrivateIPv4(parts)
-  }
+  const mapped = mappedIPv4(host)
+  if (mapped) return isPrivateIPv4(mapped)
+  const first = parseInt(host.split(':')[0] || '0', 16)
+  if ((first & 0xffc0) === 0xfe80) return true // link-local fe80::/10
+  if ((first & 0xfe00) === 0xfc00) return true // unique local fc00::/7
   return false
+}
+
+/**
+ * The IPv4 inside an IPv4-mapped address. The URL parser rewrites
+ * ::ffff:169.254.169.254 as ::ffff:a9fe:a9fe, so both spellings are read.
+ */
+function mappedIPv4(host: string): number[] | null {
+  const dotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host)
+  if (dotted) return ipv4Parts(dotted[1])
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host)
+  if (!hex) return null
+  const hi = parseInt(hex[1], 16)
+  const lo = parseInt(hex[2], 16)
+  return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff]
 }
 
 export function validateUpstreamUrl(

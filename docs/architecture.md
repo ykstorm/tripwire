@@ -56,7 +56,7 @@ catching cross-chunk leaks: delivered output lags by the hold-back length.
 
 ## Post-hoc audit
 
-`checkResponse` (`src/check/`) runs the full pattern set plus the Homesty-specific
+`checkResponse` (`src/check/`) runs the content rules (not the secret-key pattern) plus the Homesty-specific
 rules (hallucination, card discipline, language match, price/commission locks)
 against a completed response and returns `{ passed, violations }` without
 throwing. It is a thin loop over a rule table: a context is built once
@@ -84,8 +84,10 @@ Per request the handler (`src/proxy/handlers/chat.ts`):
 - opens the upstream with an `AbortController` signal, `maxRetries: 0`, and a
   `baseURL` taken from validated config - never from `OPENAI_BASE_URL`.
 - runs every delta string field (content, refusal, tool-call and function-call
-  arguments) through a per-choice guard, forwarding only released content as
-  synthesized OpenAI delta chunks.
+  arguments) through a per-choice guard. Content is forwarded as the guard
+  releases it; a refusal, tool-call or function-call delta is held whole until
+  the aux guard has released the text up to and including it, then forwarded as
+  a synthesized OpenAI delta chunk.
 - aborts the upstream on a rule trip, a client disconnect, or the per-stream time
   limit; caps total streamed characters; honors SSE backpressure.
 - on failure sends the client only `{ error, upstream_status }`; the full error

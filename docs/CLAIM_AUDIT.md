@@ -3,14 +3,14 @@
 Every public claim about Tripwire maps to the file that implements it and the
 test that proves it. If a row cannot be filled, the claim does not ship. References
 are by file rather than line so they do not rot; the test suite is the source of
-truth (85 tests across 11 files, run with `npm test`).
+truth (90 tests across 11 files, run with `npm test`).
 
 ## Streaming guard
 
 | Claim | Implemented in | Verified by |
 |---|---|---|
 | Hard-abort patterns throw `GuardAbortError` mid-stream before the matched text is released | `src/streaming/index.ts` | `tests/streaming.test.ts`, `tests/adversarial/holdback.test.ts` |
-| A violation split across chunks never releases its prefix (hold-back buffer) | `src/streaming/index.ts` | `tests/adversarial/holdback.test.ts` |
+| A violation split across chunks never releases its prefix (hold-back buffer), for content and for tool-call, refusal and function-call deltas | `src/streaming/index.ts`, `src/proxy/handlers/chat.ts` (`releaseAux`) | `tests/adversarial/holdback.test.ts`, `tests/adversarial/per-choice.test.ts` |
 | Unicode-evaded leaks (zero-width, non-ASCII digits, dash look-alikes) are caught | `src/normalize.ts`, `src/patterns/` | `tests/adversarial/normalize.test.ts` |
 | Soft-observe patterns record one violation per label without throwing | `src/streaming/index.ts` | `tests/streaming.test.ts`, `tests/adversarial/abort-correctness.test.ts` |
 | A single oversized chunk is rejected (`CHUNK_TOO_LARGE`) | `src/streaming/index.ts` | `tests/adversarial/redos.test.ts` |

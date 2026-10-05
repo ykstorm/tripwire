@@ -23,6 +23,13 @@ describe('upstream URL pinning (SSRF guard)', () => {
     }
   })
 
+  it('rejects IPv4-mapped IPv6 spellings of private and metadata addresses', () => {
+    for (const host of ['[::ffff:169.254.169.254]', '[::ffff:127.0.0.1]', '[::ffff:10.0.0.1]', '[fe90::1]', '[fdab::1]']) {
+      expect(() => validateUpstreamUrl(`https://${host}/v1`, strict), host).toThrow(ConfigError)
+    }
+    expect(() => validateUpstreamUrl('https://[2606:4700::1111]/v1', strict)).not.toThrow()
+  })
+
   it('does not mistake public hostnames that start like IPv6 prefixes for private addresses', () => {
     expect(() => validateUpstreamUrl('https://fdic.gov/v1', strict)).not.toThrow()
     expect(() => validateUpstreamUrl('https://fe80.example.com/v1', strict)).not.toThrow()

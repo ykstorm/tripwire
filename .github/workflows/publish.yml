@@ -23,6 +23,9 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   docker:
+    # The image is only worth pushing for a release whose tests passed and
+    # whose package went out.
+    needs: npm
     runs-on: ubuntu-latest
     permissions:
       contents: read

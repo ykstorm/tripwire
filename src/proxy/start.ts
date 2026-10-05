@@ -27,6 +27,10 @@ export function startProxy(): Server {
   }
 
   const port = parseInt(process.env.PORT ?? '8080', 10)
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    console.error(`[tripwire] PORT must be a whole number from 0 to 65535, got ${JSON.stringify(process.env.PORT)}`)
+    process.exit(1)
+  }
   const server = createProxyServer({ config }).listen(port, () => {
     console.log(`tripwire proxy listening on :${port}`)
   })
