@@ -37,10 +37,21 @@ export const DEFAULT_HOLDBACK = 48
 /** A single onChunk delta larger than this is rejected (see ChunkTooLargeError). */
 export const MAX_CHUNK_CHARS = 16384
 
-/** Characters of prior context scanned alongside each new chunk. Comfortably
- *  larger than any built-in pattern's span, so a straddling match is caught the
- *  moment its final character arrives without re-scanning the whole buffer. */
+/** Characters of earlier text scanned with each new chunk, so a match that
+ *  straddles chunks is caught when its last character arrives. A rule only sees
+ *  a match that fits inside this overlap plus the new chunk. Every fixed-length
+ *  built-in shape is far shorter (the longest, a GitHub token, is 40
+ *  characters), but the JWT rule has no upper bound: a token whose header and
+ *  payload together run past about 512 characters is never seen whole, so it is
+ *  not caught. */
 const SCAN_OVERLAP = 512
+
+/** Characters before the overlap that the rules can look back at but cannot
+ *  start a match in. Without them a lookbehind, `\b` or a multiline `^` at the
+ *  window's first character sees the start of a string, so the cut-off end of a
+ *  clean word (`sk-adjusted...` out of `risk-adjusted...`) or of a long number
+ *  could match. */
+const EDGE_CONTEXT = 64
 
 /** Fast path: normalization only changes non-ASCII text (code unit >= 0x80,
  *  which also covers astral characters via their surrogate halves). */
@@ -92,9 +103,22 @@ export interface StreamingGuardOptions {
 }
 
 interface PatternEntry {
-  pattern: RegExp
+  /** The rule as given, recompiled with only the g flag added: test() then
+   *  starts at lastIndex while lookbehinds still see the text before it. A g
+   *  or y flag on the caller's regex is dropped, so its own lastIndex never
+   *  matters. */
+  scanner: RegExp
   label: string
   mode: 'abort' | 'observe'
+}
+
+function entry({ pattern, label, mode }: CustomPattern): PatternEntry {
+  return { scanner: new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, '') + 'g'), label, mode }
+}
+
+/** Normalization only changes non-ASCII text, so pure ASCII skips it. */
+function prepare(text: string): string {
+  return NON_ASCII.test(text) ? normalize(text) : text
 }
 
 export class StreamingGuard {
@@ -114,7 +138,7 @@ export class StreamingGuard {
     this.onViolate = options.onViolate ?? (() => {})
     this.onAbort = options.onAbort ?? (() => {})
 
-    this.patterns = [
+    const builtIn: CustomPattern[] = [
       // Safety - hard abort.
       { pattern: SECRET_LEAK_PATTERN, label: 'SECRET_LEAK', mode: 'abort' },
       { pattern: CONTACT_LEAK_PATTERN, label: 'CONTACT_LEAK', mode: 'abort' },
@@ -128,10 +152,8 @@ export class StreamingGuard {
       { pattern: PLACEHOLDER_PRICE_PATTERN, label: 'PLACEHOLDER_LEAK', mode: 'observe' },
       { pattern: PLACEHOLDER_CUID_PATTERN, label: 'PLACEHOLDER_LEAK', mode: 'observe' },
     ]
-
-    if (options.patterns?.length) {
-      this.patterns.push(...options.patterns)
-    }
+    // Custom patterns run after the built-ins, so a built-in abort wins on the same chunk.
+    this.patterns = [...builtIn, ...(options.patterns ?? [])].map(entry)
   }
 
   /** Whether a hard-abort pattern has latched this guard. */
@@ -177,13 +199,17 @@ export class StreamingGuard {
   }
 
   private runPatterns(chunkLen: number): void {
-    // Scan only the new chunk plus enough prior context to catch a straddling
-    // match; normalize only when the window actually holds non-ASCII text.
-    const start = Math.max(0, this.raw.length - chunkLen - SCAN_OVERLAP)
-    const window = this.raw.slice(start)
-    const text = NON_ASCII.test(window) ? normalize(window) : window
-    for (const { pattern, label, mode } of this.patterns) {
-      if (!pattern.test(text)) continue
+    // Scan the new chunk plus SCAN_OVERLAP characters before it. The
+    // EDGE_CONTEXT characters before that are only there for lookbehinds and
+    // anchors: matching starts after them (lastIndex), so a match cannot begin
+    // in text that earlier windows already covered.
+    const windowStart = Math.max(0, this.raw.length - chunkLen - SCAN_OVERLAP)
+    const contextStart = Math.max(0, windowStart - EDGE_CONTEXT)
+    const context = prepare(this.raw.slice(contextStart, windowStart))
+    const text = context + prepare(this.raw.slice(windowStart))
+    for (const { scanner, label, mode } of this.patterns) {
+      scanner.lastIndex = context.length
+      if (!scanner.test(text)) continue
       const violation = `${label}: pattern matched in stream`
       if (mode === 'abort') {
         this.abortedFlag = true
