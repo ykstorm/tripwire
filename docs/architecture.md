@@ -40,10 +40,15 @@ A phone number split across three chunks:
    (default 48). `flush()` releases the held tail at the end, and returns nothing
    once aborted (the held tail may precede the violation).
 
-Because the scan window is bounded, per-chunk cost does not grow with response
-length. Because matching runs on normalized text, unicode evasions (zero-width
-splits, non-ASCII digits, dash look-alikes) are folded away first
-(`src/normalize.ts`).
+The rules run on a bounded window, but per-chunk cost still grows on long
+streams: the guard keeps the whole stream in one string and slices each release
+out of it, and V8 can copy the whole string to take that slice. The proxy caps a
+stream at `TRIPWIRE_MAX_STREAM_CHARS` (200,000 characters by default), which
+bounds that cost; the README's Performance section has the details. Because
+matching runs on normalized text, unicode evasions (zero-width splits,
+non-ASCII digits, dash look-alikes) are folded away first (`src/normalize.ts`).
+Format characters such as zero-width spaces are left out when the window and
+the hold-back are counted, so padding cannot push part of a match out.
 
 ### Why the hold-back matters
 

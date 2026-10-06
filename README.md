@@ -284,8 +284,11 @@ bin/
   tripwire-proxy.ts   — CLI entrypoint
 ```
 
-The core library (`normalize`, `patterns`, `streaming`, `transitions`, `check`)
-has no runtime dependencies. The proxy pulls in `express` and the `openai` SDK.
+The library code (`normalize`, `patterns`, `streaming`, `transitions`, `check`)
+imports nothing outside Node itself; only the proxy uses `express` and the
+`openai` SDK. Both are still listed as dependencies, because the
+`tripwire-proxy` command ships in the same package, so installing the package
+installs them too.
 
 ---
 
@@ -301,8 +304,17 @@ benchmark workflow fails on a regression past 3x it. Reproduce with:
 npm run build && node bench/per-chunk.mjs   # pure CPU, no API key
 ```
 
-Cost per chunk is bounded by a fixed scan window, so it stays flat regardless of
-response length.
+That benchmark streams a reply of about 2,600 characters, so it shows the cost
+of a normal reply, not of a long one. Cost per chunk is not flat on long
+streams. The rules run on a bounded window, but the guard also keeps the whole
+stream in one string and slices each release out of it. V8 stores a string
+built by repeated `+=` in pieces and can copy the whole of it to take that
+slice, so a chunk late in a long stream can cost far more than one early on.
+How much more depends on the engine's state at the time; repeated runs of the
+same long stream on one machine varied too widely to quote one figure. In the
+proxy, `TRIPWIRE_MAX_STREAM_CHARS` (200,000 by default) caps the stream and with
+it this cost; a library caller that streams very long replies should cap them
+the same way.
 
 ---
 

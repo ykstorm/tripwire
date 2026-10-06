@@ -1,6 +1,6 @@
 # RFC-2 — Mid-Stream LLM Guardrails
 
-**RFC:** 2 · **Title:** Mid-stream LLM guardrails · **Author:** Lakshyaraj Singh Rao · **Status:** shipped in `@ykstormsorg/tripwire` v1.1.0 · **Date:** 2026-07-18
+**RFC:** 2 · **Title:** Mid-stream LLM guardrails · **Author:** Lakshyaraj Singh Rao · **Status:** implemented on `main`, not yet released (npm 1.1.0, published 2026-06-23, predates the hold-back design) · **Date:** 2026-07-18
 
 ## Summary
 
@@ -8,7 +8,7 @@ Streaming LLM responses commit tokens to the consumer as they generate; a violat
 
 ## Motivation
 
-In a production consumer chat, a streamed response emitted an unfilled template placeholder — the literal `{{PRICE}}` — into a buyer's message. A completion-time content check existed and would have caught it, but it ran in the `onFinish` handler, after the full response had already streamed to the screen. The buyer had read the placeholder before the check fired. The check produced a Sentry event and no remedy.
+In a production consumer chat, a streamed response emitted an unfilled price placeholder, a template value of the form `₹X,XXX/sqft`, into a buyer's message. A completion-time content check existed and would have caught it, but it ran in the `onFinish` handler, after the full response had already streamed to the screen. The buyer had read the placeholder before the check fired. The check produced a Sentry event and no remedy. In Tripwire that shape is matched by `PLACEHOLDER_PRICE_PATTERN`, which is an observe rule: the guard records it while the stream runs but does not stop it. Stopping it needs a custom pattern in abort mode.
 
 The failure class is every streamed generation: once a token is yielded to the consumer it is on their screen and cannot be retracted, so any check that runs after the stream completes is an audit, not a guard. The harms are concrete — a fabricated entity name, a leaked contact detail, a committed discount, a placeholder variable — and they share the property that delivery is the harm. A guard that prevents them must run before the token is yielded, which means inside the stream, per chunk. The cost objection (a check on every token in a latency path) is the reason most systems do not do this; measuring the cost dissolves the objection.
 
@@ -16,7 +16,7 @@ The failure class is every streamed generation: once a token is yielded to the c
 
 **G1 — Catch violations before delivery.** The check runs per chunk on the accumulated buffer and can abort before the offending token is yielded. *Non-goal:* catching violations that require the completed response to detect — those belong to the batch mode, which accepts post-delivery latency.
 
-**G2 — Match across chunk boundaries.** The matcher runs on accumulated text, not the incoming delta, so a violation split across two chunks is still caught. *Non-goal:* unbounded accumulation — the buffer is windowed to keep per-chunk cost flat regardless of response length.
+**G2 — Match across chunk boundaries.** The matcher runs on accumulated text, not the incoming delta, so a violation split across two chunks is still caught. *Non-goal:* matching across the whole response. Rules run on a bounded window (the new chunk plus 512 characters), so a match longer than that, such as a very long JWT, is not seen whole. The window bounds the matching cost, but the guard still keeps the whole stream to release text from, so per-chunk cost grows on long streams; the proxy's `TRIPWIRE_MAX_STREAM_CHARS` caps the stream.
 
 **G3 — Two-tier severity.** Hard-abort patterns throw; observe patterns log and continue. *Non-goal:* a single uniform severity — treating every pattern as hard-abort would kill good streams on soft signals, and treating every pattern as observe would deliver the irreversible harms.
 
@@ -26,11 +26,11 @@ The failure class is every streamed generation: once a token is yielded to the c
 
 ## Design
 
-**Mechanism.** `StreamingGuard` wraps the token stream (`src/streaming/index.ts`). `onChunk(chunk)` appends to the raw buffer and evaluates the pattern list against a normalized trailing window on every call. Each pattern carries a mode, abort or observe. On an abort match the guard throws `GuardAbortError` immediately, before the matched text is released; on an observe match it records a violation once per label and continues. The scan window is bounded so the match cost does not grow with response length, and the guard withholds the last `holdback` characters so a violation straddling a chunk boundary is caught before its prefix is released.
+**Mechanism.** `StreamingGuard` wraps the token stream (`src/streaming/index.ts`). `onChunk(chunk)` appends to the raw buffer and evaluates the pattern list against a normalized trailing window on every call. Each pattern carries a mode, abort or observe. On an abort match the guard throws `GuardAbortError` immediately, before the matched text is released; on an observe match it records a violation once per label and continues. The scan window is bounded so the matching cost does not grow with response length (the release step still does; see G2), and the guard withholds the last `holdback` characters so a violation straddling a chunk boundary is caught before its prefix is released.
 
 **Data model.** A pattern is a compiled regex plus a label plus a mode (`abort | observe`). Default patterns cover contact-info leaks and business-sensitive leaks — commission rates and partner-status claims (`src/patterns/business.ts`) — as abort; placeholders, markdown artifacts, and price-commitment language as observe. Callers add patterns through the factory (`createStreamingGuard`); custom patterns are appended after the built-ins, which cannot be removed. The guard holds the accumulated buffer, the pattern list, an `onViolate` handler, and an `onAbort` handler.
 
-**Invariants.** (1) An abort throws before the matched content is yielded onward. (2) The accumulated buffer, not the delta, is the match target, so boundary-straddling violations are caught. (3) Per-chunk cost is bounded by the window, independent of total length. (4) An observe match never blocks the stream; it only records.
+**Invariants.** (1) An abort throws before the matched content is yielded onward. (2) The accumulated buffer, not the delta, is the match target, so boundary-straddling violations are caught. (3) Matching cost per chunk is bounded by the window; total per-chunk cost is not, and is capped in the proxy by the stream size limit. (4) An observe match never blocks the stream; it only records.
 
 **Failure modes covered.** Irreversible leaks reaching the user — covered by abort-before-yield (G1). Boundary-split violations — covered by accumulated-buffer matching (G2). False-positive stream kills on soft signals — covered by the observe tier (G3). Latency regression — the CI benchmark publishes the per-chunk cost so a regression is caught (G4). Incoherent aborts — covered by partial-plus-fallback (G5).
 
@@ -54,7 +54,7 @@ The failure class is every streamed generation: once a token is yielded to the c
 
 **Q2 — Observe-to-abort promotion criteria.** What false-positive rate justifies promoting a pattern from observe to abort? The tradeoff is a threshold: too strict and useful patterns never earn abort authority; too loose and a noisy pattern kills good streams. The answer is a measured precision floor, corpus-specific.
 
-**Q3 — Window size versus boundary reach.** The buffer trim bounds cost but also bounds how far back a boundary-straddling match can reach. What window keeps cost flat without missing long-span violations? Tradeoff: larger window catches longer violations at higher per-chunk cost.
+**Q3 — Window size versus boundary reach.** The scan window bounds matching cost but also bounds how far back a boundary-straddling match can reach. What window catches long-span violations, such as long JWTs, without raising the cost of every chunk? Tradeoff: larger window catches longer violations at higher per-chunk cost.
 
 **Q4 — Multi-tenant pattern isolation.** Patterns are global to a guard instance. For a multi-tenant proxy, should patterns be per-tenant, and at what cost to the shared compiled-regex efficiency? Tradeoff: per-tenant flexibility against shared-compilation speed.
 
@@ -62,4 +62,4 @@ The failure class is every streamed generation: once a token is yielded to the c
 
 ## Rollout
 
-Introduce the guard in observe-only mode first: wrap the existing stream, run the full pattern set, log every match, abort nothing. Collect the false-positive rate per pattern from the observe logs over real traffic. Promote patterns to abort individually, in order of measured precision, starting with the irreversible-harm classes (contact leaks, business-sensitive leaks) whose cost of a miss is highest. Ship the partial-plus-fallback handling in the application layer before enabling any abort, so the first abort has a coherent consumer experience. Deploy as a library wrap for in-process use or as the OpenAI-compatible sidecar for cross-service use; the sidecar aborts mid-stream and emits a structured SSE error part on a rule trip. Monitor per-pattern fire rates, abort rates, and the CI-published per-chunk cost; a rise in a pattern's fire rate is either drift to investigate or a false-positive spike to demote. The benchmark workflow runs on push so the per-chunk cost is a regression-gated number, not a one-time measurement.
+The built-in abort rules (`SECRET_LEAK`, `CONTACT_LEAK`, `BUSINESS_LEAK`) cannot be switched to observe; any guard that runs them can abort. What can run observe-only first: a new rule, added as a custom pattern with mode `observe` and promoted to `abort` once its false-positive rate is known; and a shadow run in library mode, where the application feeds a copy of each stream to a guard, logs any `GuardAbortError` it throws, and forwards the original stream unchanged, which measures the built-in abort rules on real traffic without stopping anything. `checkResponse` can also be run over finished replies for the same purpose. Collect the false-positive rate per pattern from those logs before enabling aborts in the forwarding path. Ship the partial-plus-fallback handling in the application layer before enabling any abort, so the first abort has a coherent consumer experience. Deploy as a library wrap for in-process use or as the OpenAI-compatible sidecar for cross-service use; the sidecar aborts mid-stream and emits a structured SSE error part on a rule trip. Monitor per-pattern fire rates, abort rates, and the CI-published per-chunk cost; a rise in a pattern's fire rate is either drift to investigate or a false-positive spike to demote. The benchmark workflow runs on push so the per-chunk cost is a regression-gated number, not a one-time measurement.
