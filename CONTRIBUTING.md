@@ -12,9 +12,9 @@ npm install
 
 ## Workflow
 
-1. **Create a feature branch** from `main`
-2. **Make your changes** — add tests for new behavior
-3. **Run the full suite** before opening a PR:
+1. Create a feature branch from `main`
+2. Make your changes and add tests for new behavior
+3. Run the full suite before opening a PR:
 
 ```bash
 npm run typecheck  # TypeScript check
@@ -23,7 +23,7 @@ npm test           # Vitest unit tests
 npm run build      # Confirm the build succeeds
 ```
 
-4. **Open a PR** against `main` with a clear description
+4. Open a PR against `main` with a clear description
 
 ## What makes a good PR
 
