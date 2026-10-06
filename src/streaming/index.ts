@@ -17,7 +17,7 @@
 // onChunk throws GuardAbortError the instant a hard-abort pattern matches; the
 // guard latches aborted and every later onChunk throws until reset().
 
-import { normalize } from '../normalize.js'
+import { normalize, FORMAT_CHARS } from '../normalize.js'
 import {
   CONTACT_LEAK_PATTERN,
   SECRET_LEAK_PATTERN,
@@ -124,6 +124,11 @@ function prepare(text: string): string {
 export class StreamingGuard {
   private raw = ''
   private releasedLen = 0
+  /** Already-scanned text with format characters removed: at most
+   *  EDGE_CONTEXT + SCAN_OVERLAP characters. */
+  private recent = ''
+  /** Raw index of every format code unit (zero-width spaces and the like). */
+  private readonly formatAt: number[] = []
   private abortedFlag = false
   private abortRule = 'ABORTED'
   private readonly firedObserve = new Set<string>()
@@ -174,8 +179,9 @@ export class StreamingGuard {
     if (chunk.length > MAX_CHUNK_CHARS) {
       throw new ChunkTooLargeError(chunk.length)
     }
+    const visible = this.stripFormat(chunk)
     this.raw += chunk
-    this.runPatterns(chunk.length)
+    if (visible) this.runPatterns(visible)
     return this.releasable()
   }
 
@@ -192,21 +198,39 @@ export class StreamingGuard {
   reset(): void {
     this.raw = ''
     this.releasedLen = 0
+    this.recent = ''
+    this.formatAt.length = 0
     this.abortedFlag = false
     this.abortRule = 'ABORTED'
     this.violations.length = 0
     this.firedObserve.clear()
   }
 
-  private runPatterns(chunkLen: number): void {
-    // Scan the new chunk plus SCAN_OVERLAP characters before it. The
+  /**
+   * The chunk without format characters (the ones normalize() deletes),
+   * recording where each one sits in the raw stream. The rules never see them,
+   * so the scan window and the hold-back do not count them either: padding a
+   * number with hundreds of zero-width spaces cannot push its first half out
+   * or its start out of the window.
+   */
+  private stripFormat(chunk: string): string {
+    if (!NON_ASCII.test(chunk)) return chunk
+    const base = this.raw.length
+    for (const m of chunk.matchAll(FORMAT_CHARS)) {
+      for (let k = 0; k < m[0].length; k++) this.formatAt.push(base + (m.index ?? 0) + k)
+    }
+    return chunk.replace(FORMAT_CHARS, '')
+  }
+
+  private runPatterns(visible: string): void {
+    // Scan the new text plus SCAN_OVERLAP characters before it. The
     // EDGE_CONTEXT characters before that are only there for lookbehinds and
     // anchors: matching starts after them (lastIndex), so a match cannot begin
     // in text that earlier windows already covered.
-    const windowStart = Math.max(0, this.raw.length - chunkLen - SCAN_OVERLAP)
-    const contextStart = Math.max(0, windowStart - EDGE_CONTEXT)
-    const context = prepare(this.raw.slice(contextStart, windowStart))
-    const text = context + prepare(this.raw.slice(windowStart))
+    const contextLen = Math.max(0, this.recent.length - SCAN_OVERLAP)
+    const context = prepare(this.recent.slice(0, contextLen))
+    const text = context + prepare(this.recent.slice(contextLen) + visible)
+    this.recent = (this.recent + visible).slice(-(EDGE_CONTEXT + SCAN_OVERLAP))
     for (const { scanner, label, mode } of this.patterns) {
       scanner.lastIndex = context.length
       if (!scanner.test(text)) continue
@@ -225,12 +249,32 @@ export class StreamingGuard {
     }
   }
 
+  /** Everything except the last `holdback` visible characters, from where the
+   *  previous release stopped. */
   private releasable(): string {
-    const keep = Math.max(this.releasedLen, this.raw.length - this.holdback)
+    const visibleLen = this.raw.length - this.formatAt.length
+    const keep = this.rawIndexOfVisible(visibleLen - this.holdback)
     if (keep <= this.releasedLen) return ''
     const out = this.raw.slice(this.releasedLen, keep)
     this.releasedLen = keep
     return out
+  }
+
+  /** Raw index of visible code unit `n` (raw.length when n counts them all);
+   *  just n when the stream has no format characters. */
+  private rawIndexOfVisible(n: number): number {
+    const at = this.formatAt
+    if (at.length === 0 || n < 0) return n
+    // at[k] - k is the number of visible units before format unit k; count the
+    // format units that come before visible unit n.
+    let lo = 0
+    let hi = at.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if (at[mid] - mid <= n) lo = mid + 1
+      else hi = mid
+    }
+    return n + lo
   }
 }
 

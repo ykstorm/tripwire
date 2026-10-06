@@ -94,3 +94,53 @@ describe('streaming guard catches unicode-evaded leaks across 3 chunk boundaries
     expect(SECRET_LEAK_PATTERN.test('sk-Ab_Cd-Ef_Gh-Ij_Kl-Mn12')).toBe(true)
   })
 })
+
+describe('zero-width and bidi control characters', () => {
+  // U+200B to U+200F, U+2060, U+FEFF, U+202A to U+202E: all in Unicode category Cf.
+  const controls = [
+    '\u200B', '\u200C', '\u200D', '\u200E', '\u200F', '\u2060', '\uFEFF',
+    '\u202A', '\u202B', '\u202C', '\u202D', '\u202E',
+  ]
+
+  it('normalize strips each of them from between digits', () => {
+    for (const c of controls) {
+      expect(normalize(`98765${c}43210`), `U+${c.codePointAt(0)?.toString(16)}`).toBe('9876543210')
+    }
+  })
+
+  it('a phone number with one between every digit still trips', () => {
+    const digits = '9876543210'.split('')
+    const text = 'call ' + digits.map((d, i) => d + controls[i % controls.length]).join('')
+    expect(aborts(split(text, 3))).toBe(true)
+    expect(aborts(text.split(''))).toBe(true)
+  })
+
+  it('padding between the halves of a number neither releases the first half nor hides the match', () => {
+    for (const pad of [60, 600, 5000]) {
+      const g = new StreamingGuard()
+      let delivered = ''
+      let tripped = false
+      try {
+        for (const c of 'call 98765' + '\u200B'.repeat(pad) + '43210') delivered += g.onChunk(c)
+        delivered += g.flush()
+      } catch (e) {
+        tripped = e instanceof GuardAbortError
+      }
+      expect(tripped, `${pad} zero-width spaces`).toBe(true)
+      expect(delivered).not.toContain('98765')
+    }
+  })
+
+  it('counts the hold-back in visible characters and keeps format characters in the output', () => {
+    const g = new StreamingGuard({ holdback: 3 })
+    expect(g.onChunk('he\u200Bllo world')).toBe('he\u200Bllo wo')
+    expect(g.flush()).toBe('rld')
+
+    const family = 'A family emoji \u{1F468}\u200D\u{1F469}\u200D\u{1F467} stays joined. ' + 'More plain words follow here. '.repeat(5)
+    const h = new StreamingGuard()
+    let out = ''
+    for (const c of family) out += h.onChunk(c)
+    out += h.flush()
+    expect(out).toBe(family)
+  })
+})
