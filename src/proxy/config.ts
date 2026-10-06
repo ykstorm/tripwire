@@ -266,22 +266,23 @@ const PROBE_SLOW_MS = 20
  *  about this long instead of hanging it. */
 const PROBE_TIMEOUT_MS = 200
 
-const PROBE_SCRIPT = new Script('pattern.lastIndex = 0; pattern.test(probe)')
+// Times only the test() call; starting the vm timeout's watchdog thread is
+// not the pattern's cost and can take several milliseconds on a busy machine.
+const PROBE_SCRIPT = new Script('(() => { pattern.lastIndex = 0; const t0 = now(); pattern.test(probe); return now() - t0 })()')
 
 function screenForRedos(pattern: RegExp, label: string): void {
-  const context = createContext({ pattern, probe: '' })
+  const context = createContext({ pattern, probe: '', now: () => performance.now() })
   for (const probe of REDOS_PROBES) {
     context.probe = probe
-    const t0 = process.hrtime.bigint()
+    let ms: number
     try {
-      PROBE_SCRIPT.runInContext(context, { timeout: PROBE_TIMEOUT_MS })
+      ms = PROBE_SCRIPT.runInContext(context, { timeout: PROBE_TIMEOUT_MS }) as number
     } catch (err) {
       if ((err as { code?: string }).code !== 'ERR_SCRIPT_EXECUTION_TIMEOUT') throw err
       throw new ConfigError(
         `custom pattern "${label}" did not finish a ${probe.length}-character probe within ${PROBE_TIMEOUT_MS}ms - likely catastrophic backtracking`
       )
     }
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6
     if (ms > PROBE_SLOW_MS) {
       throw new ConfigError(
         `custom pattern "${label}" is too slow (${ms.toFixed(1)}ms on a ${probe.length}-character probe) - likely catastrophic backtracking`
