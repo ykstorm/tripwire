@@ -78,8 +78,8 @@ export class ChunkTooLargeError extends Error {
 
 /** Soft-observe handler - called when an observe pattern fires. */
 export type ViolationHandler = (violation: string, pattern: string) => void
-/** Hard-abort handler - called when an abort pattern fires. May throw; the guard
- *  throws GuardAbortError afterwards regardless. */
+/** Hard-abort handler - called when an abort pattern fires. If it throws, the
+ *  guard logs that error and throws GuardAbortError anyway. */
 export type AbortHandler = (violation: string, pattern: string) => void
 
 /** A user-supplied custom pattern entry. */
@@ -238,7 +238,13 @@ export class StreamingGuard {
       if (mode === 'abort') {
         this.abortedFlag = true
         this.abortRule = label
-        this.onAbort(violation, label)
+        try {
+          this.onAbort(violation, label)
+        } catch (err) {
+          // The caller's catch block is written for GuardAbortError; a handler
+          // bug must not replace it.
+          console.error(`[tripwire] onAbort handler threw on ${label}; throwing GuardAbortError instead:`, err)
+        }
         throw new GuardAbortError(violation, label)
       }
       if (!this.firedObserve.has(label)) {

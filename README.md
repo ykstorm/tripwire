@@ -194,6 +194,7 @@ reference.
 - `onViolate(violation, pattern)` — called when a soft-observe pattern fires
 - `onAbort(violation, pattern)` — called when a hard-abort pattern fires; the
   guard throws `GuardAbortError` afterwards whether or not this handler throws
+  (an error thrown by the handler is logged with `console.error`, not rethrown)
 - `patterns` — custom patterns **merged with** the built-ins (they do not replace them)
 - `holdback` — characters withheld until following context arrives (default 48)
 

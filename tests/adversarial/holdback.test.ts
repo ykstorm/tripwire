@@ -50,6 +50,31 @@ describe('hold-back buffer (cross-chunk leak prevention)', () => {
     expect(onAbort).toHaveBeenCalledOnce()
   })
 
+  it('a throwing onAbort still ends in GuardAbortError, and its error is logged', () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const g = new StreamingGuard({
+        holdback: 4,
+        onAbort: () => {
+          throw new Error('handler bug')
+        },
+      })
+      let caught: unknown
+      try {
+        g.onChunk('call 9876543210')
+      } catch (e) {
+        caught = e
+      }
+      expect(caught).toBeInstanceOf(GuardAbortError)
+      expect((caught as GuardAbortError).rule).toBe('CONTACT_LEAK')
+      expect(g.aborted).toBe(true)
+      expect(logged).toHaveBeenCalledOnce()
+      expect(String(logged.mock.calls[0][1])).toContain('handler bug')
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
   it('a chunk after abort throws without re-matching (latched)', () => {
     const g = new StreamingGuard({ holdback: 4 })
     expect(() => g.onChunk('call 9876543210')).toThrow(GuardAbortError)

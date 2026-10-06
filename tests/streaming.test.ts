@@ -9,7 +9,7 @@ describe('StreamingGuard', () => {
       let aborted = false
       let delivered = ''
       const g = new StreamingGuard({
-        onAbort: () => { aborted = true; throw new Error('ABORT') }
+        onAbort: () => { aborted = true }
       })
       for (const chunk of chunks) {
         try {
@@ -25,7 +25,7 @@ describe('StreamingGuard', () => {
     })
 
     it('hard-aborts on email address in stream', () => {
-      const g = new StreamingGuard({ onAbort: () => { throw new Error('ABORT') } })
+      const g = new StreamingGuard({ onAbort: () => {} })
       let delivered = ''
       for (const chunk of ['Hi ', 'reach ', 'me ', 'at ', 'user@example.com']) {
         try {
@@ -38,7 +38,7 @@ describe('StreamingGuard', () => {
 
     it('partial delivery — no silent failures', () => {
       let delivered = ''
-      const g = new StreamingGuard({ onAbort: () => { throw new Error('ABORT') } })
+      const g = new StreamingGuard({ onAbort: () => {} })
       for (const chunk of ['Call ', 'us ', 'at ', '9876543210 ', 'today']) {
         try {
           g.onChunk(chunk)
@@ -51,7 +51,7 @@ describe('StreamingGuard', () => {
     })
 
     it('resets and allows fresh stream after hard abort', () => {
-      const g = new StreamingGuard({ onAbort: () => { throw new Error('ABORT') } })
+      const g = new StreamingGuard({ onAbort: () => {} })
       try { g.onChunk('call 9988776655') } catch { /* expected abort */ }
       g.reset()
       let delivered = ''
@@ -123,7 +123,7 @@ describe('StreamingGuard', () => {
   })
 
   describe('secret / credential leak (hard abort)', () => {
-    const abortGuard = () => new StreamingGuard({ onAbort: () => { throw new Error('ABORT') } })
+    const abortGuard = () => new StreamingGuard({ onAbort: () => {} })
 
     const secrets: readonly [string, string][] = [
       ['OpenAI key', 'sk-abcd1234efgh5678ijkl9012mnop'],
