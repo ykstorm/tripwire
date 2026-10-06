@@ -1,6 +1,6 @@
 # RFC 2: Mid-stream LLM guardrails
 
-RFC 2. Title: Mid-stream LLM guardrails. Author: Lakshyaraj Singh Rao. Status: implemented on `main`, not yet released (npm 1.1.0, published 2026-06-23, predates the hold-back design, which is explained under Design). Date: 2026-07-18.
+RFC 2. Title: Mid-stream LLM guardrails. Author: Lakshyaraj Singh Rao. Status: implemented, ships in 2.0.0 (npm 1.1.0, published 2026-06-23, predates the hold-back design, which is explained under Design). Date: 2026-07-18.
 
 ## Summary
 
