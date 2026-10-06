@@ -3,7 +3,7 @@
 Every public claim about Tripwire maps to the file that implements it and the
 test that proves it. If a row cannot be filled, the claim does not ship. References
 are by file rather than line so they do not rot; the test suite is the source of
-truth (90 tests across 11 files, run with `npm test`).
+truth (112 tests across 13 files, run with `npm test`).
 
 ## Streaming guard
 
