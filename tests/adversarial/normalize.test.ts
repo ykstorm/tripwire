@@ -132,9 +132,11 @@ describe('zero-width and bidi control characters', () => {
   })
 
   it('counts the hold-back in visible characters and keeps format characters in the output', () => {
+    // Two zero-width spaces inside the held tail do not count toward the three
+    // characters held back, so one more visible character stays behind.
     const g = new StreamingGuard({ holdback: 3 })
-    expect(g.onChunk('he\u200Bllo world')).toBe('he\u200Bllo wo')
-    expect(g.flush()).toBe('rld')
+    expect(g.onChunk('hello wor\u200B\u200Bld')).toBe('hello wo')
+    expect(g.flush()).toBe('r\u200B\u200Bld')
 
     const family = 'A family emoji \u{1F468}\u200D\u{1F469}\u200D\u{1F467} stays joined. ' + 'More plain words follow here. '.repeat(5)
     const h = new StreamingGuard()
