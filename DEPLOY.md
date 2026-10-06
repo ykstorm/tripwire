@@ -120,7 +120,7 @@ HOST=https://tripwire.example.com
 
 # Health
 curl -fsS $HOST/healthz
-# { "ok": true, "version": "1.1.0" }
+# { "ok": true, "version": "2.0.0" }
 
 # Clean prompt streams normally
 curl -N -X POST $HOST/v1/chat/completions \

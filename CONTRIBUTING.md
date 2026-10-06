@@ -29,7 +29,7 @@ npm run build      # Confirm the build succeeds
 
 - Small, focused changes
 - Tests included for new behavior
-- No breaking changes to the public API
+- A change that breaks the public API needs a major version bump and a changelog entry under Changed (breaking)
 - Related documentation updated
 
 ## Reporting issues

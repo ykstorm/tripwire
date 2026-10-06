@@ -5,10 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## 2.0.0 - unreleased
 
-Everything in this section is on `main` and not on npm. The published 1.1.0
-(2026-06-23, commit `6a9c4e4`) predates all of it.
+Four changes break the 1.1.0 API. The `windowSize` option is gone, and
+`holdback`, the number of trailing characters the guard withholds, replaces it.
+`onChunk` now returns the text that is safe to forward, so callers must forward
+what it returns and not their own chunk. The default abort error is now
+`GuardAbortError`, which carries a `rule` and has a message such as
+`CONTACT_LEAK: pattern matched in stream`, where 1.1.0 threw a plain `Error`
+whose message began with `[GUARD_ABORT]`. The proxy now answers a request that
+does not set `stream: true` with a JSON 400, where 1.1.0 streamed the reply
+regardless.
+
+Everything below is relative to 1.1.0 (2026-06-23, commit `6a9c4e4`).
 
 ### Changed (breaking)
 - `StreamingGuard.onChunk(chunk)` returns the text that is now safe to forward,
@@ -25,14 +34,14 @@ Everything in this section is on `main` and not on npm. The published 1.1.0
   default threw a plain `Error('[GUARD_ABORT] ...')`. If `onAbort` throws, its
   error is logged and `GuardAbortError` is thrown instead.
 - Proxy: a request must set `stream: true`. Anything else gets a 400.
+- The package ships `dist` only (1.1.0 also shipped `src`).
+
+### Added
 - Proxy: `TRIPWIRE_TRUST_PROXY` is a count of reverse proxies (`1` or `true`
   means one). This is the trust proxy hop count: each reverse proxy between the
   client and Tripwire is one hop. The client IP is read that many entries from
   the right of `X-Forwarded-For`, instead of from the left-most entry.
 - Proxy: `TRIPWIRE_RATE_LIMIT_RPM` must be at least 1. `0` stops the boot.
-- The package ships `dist` only (1.1.0 also shipped `src`).
-
-### Added
 - `SECRET_LEAK` abort rule for API keys and tokens: `sk-` keys, Stripe, GitLab,
   npm, Slack, AWS, GitHub, Google, JWT, PEM private key headers, Bearer tokens
   (added 2026-08-05).
