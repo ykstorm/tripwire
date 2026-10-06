@@ -14,7 +14,8 @@ export interface ProxyConfig {
   maxStreamChars: number
   maxConcurrentStreams: number
   rateLimitRpm: number
-  trustProxy: boolean
+  /** Reverse proxies in front of this one; 0 means X-Forwarded-For is ignored. */
+  trustProxyHops: number
   proxyToken?: string
   defaultMaxTokens: number
 }
@@ -33,11 +34,31 @@ function envFlag(value: string | undefined): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
 }
 
-function envInt(value: string | undefined, fallback: number): number {
+function envInt(name: string, value: string | undefined, fallback: number, min = 0): number {
   if (value === undefined || value.trim() === '') return fallback
   const n = Number(value)
-  if (!Number.isFinite(n) || n < 0) throw new ConfigError(`invalid integer env value: ${value}`)
-  return Math.floor(n)
+  if (!Number.isFinite(n) || n < 0) throw new ConfigError(`${name} must be a whole number, got ${JSON.stringify(value)}`)
+  const whole = Math.floor(n)
+  if (whole < min) throw new ConfigError(`${name} must be at least ${min}, got ${whole}`)
+  return whole
+}
+
+/**
+ * TRIPWIRE_TRUST_PROXY as a hop count. With N trusted proxies Express takes the
+ * address N entries from the right of X-Forwarded-For, the one the outermost
+ * trusted proxy wrote, so an address the client put in the header is never
+ * used. `trust proxy: true` would take the left-most entry, which the client
+ * controls. A flag word (true/yes/on) means one hop.
+ */
+function envTrustProxyHops(value: string | undefined): number {
+  if (value === undefined) return 0
+  const v = value.trim().toLowerCase()
+  if (['', '0', 'false', 'no', 'off'].includes(v)) return 0
+  if (['true', 'yes', 'on'].includes(v)) return 1
+  if (/^\d+$/.test(v)) return Number(v)
+  throw new ConfigError(
+    `TRIPWIRE_TRUST_PROXY must be the number of reverse proxies in front of tripwire (or 1/true), got ${JSON.stringify(value)}`
+  )
 }
 
 function ipv4Parts(host: string): number[] | null {
@@ -292,13 +313,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   return {
     upstreamUrl,
     customPatterns: parseCustomPatterns(env.TRIPWIRE_CUSTOM_PATTERNS),
-    holdback: envInt(env.TRIPWIRE_HOLDBACK, 48),
-    maxStreamMs: envInt(env.TRIPWIRE_MAX_STREAM_MS, 120_000),
-    maxStreamChars: envInt(env.TRIPWIRE_MAX_STREAM_CHARS, 200_000),
-    maxConcurrentStreams: envInt(env.TRIPWIRE_MAX_CONCURRENT_STREAMS, 32),
-    rateLimitRpm: envInt(env.TRIPWIRE_RATE_LIMIT_RPM, 60),
-    trustProxy: envFlag(env.TRIPWIRE_TRUST_PROXY),
+    holdback: envInt('TRIPWIRE_HOLDBACK', env.TRIPWIRE_HOLDBACK, 48),
+    maxStreamMs: envInt('TRIPWIRE_MAX_STREAM_MS', env.TRIPWIRE_MAX_STREAM_MS, 120_000),
+    maxStreamChars: envInt('TRIPWIRE_MAX_STREAM_CHARS', env.TRIPWIRE_MAX_STREAM_CHARS, 200_000),
+    maxConcurrentStreams: envInt('TRIPWIRE_MAX_CONCURRENT_STREAMS', env.TRIPWIRE_MAX_CONCURRENT_STREAMS, 32),
+    // 0 would answer every request with 429 and Retry-After: Infinity; there is no "off" value.
+    rateLimitRpm: envInt('TRIPWIRE_RATE_LIMIT_RPM', env.TRIPWIRE_RATE_LIMIT_RPM, 60, 1),
+    trustProxyHops: envTrustProxyHops(env.TRIPWIRE_TRUST_PROXY),
     proxyToken: env.TRIPWIRE_PROXY_TOKEN?.trim() || undefined,
-    defaultMaxTokens: envInt(env.TRIPWIRE_DEFAULT_MAX_TOKENS, 4096),
+    defaultMaxTokens: envInt('TRIPWIRE_DEFAULT_MAX_TOKENS', env.TRIPWIRE_DEFAULT_MAX_TOKENS, 4096),
   }
 }

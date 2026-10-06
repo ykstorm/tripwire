@@ -10,7 +10,7 @@ export function makeConfig(overrides: Partial<ProxyConfig> = {}): ProxyConfig {
     maxStreamChars: 200_000,
     maxConcurrentStreams: 32,
     rateLimitRpm: 60,
-    trustProxy: false,
+    trustProxyHops: 0,
     proxyToken: undefined,
     defaultMaxTokens: 4096,
     ...overrides,

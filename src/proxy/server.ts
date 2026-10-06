@@ -68,7 +68,9 @@ export function createProxyServer(options: ProxyServerOptions = {}): Express {
   const config = options.config ?? loadConfig()
   const app = express()
   app.disable('x-powered-by')
-  if (config.trustProxy) app.set('trust proxy', true)
+  // A hop count, never `true`: `true` takes the left-most X-Forwarded-For entry,
+  // which the client writes itself.
+  if (config.trustProxyHops > 0) app.set('trust proxy', config.trustProxyHops)
   app.use(express.json({ limit: '1mb' }))
 
   app.get('/healthz', (_req, res) => {
