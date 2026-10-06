@@ -5,37 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 1.2.0
+## [Unreleased]
 
-### Security
-- Cross-chunk hold-back buffer in `StreamingGuard`: a violation split across
-  chunks no longer delivers its prefix before the full pattern is visible.
-  `onChunk` throws `GuardAbortError` on a hard match and latches until `reset()`.
-- Unicode normalization before every match (NFKC, zero-width stripping,
-  Indic/Arabic digit folding, dash folding), so split and look-alike evasions are
-  caught.
-- Phone pattern is boundary-anchored (no longer trips on timestamps / RERA ids);
-  secret pattern covers modern `sk-`, Stripe, GitLab, npm, Slack, and JWT shapes.
-- Proxy: scans every delta field per choice, pins the upstream URL (SSRF guard),
-  validates the body, redacts secrets from logs, disables `x-powered-by`, adds an
-  optional proxy token, per-IP rate limiting, a concurrency cap, and per-stream
-  time/size limits. Custom patterns are validated and ReDoS-screened at boot.
+Everything in this section is on `main` and not on npm. The published 1.1.0
+(2026-06-23, commit `6a9c4e4`) predates all of it.
+
+### Changed (breaking)
+- `StreamingGuard.onChunk(chunk)` returns the text that is now safe to forward,
+  and `flush()` returns the held-back tail at the end of the stream. Callers must
+  forward what the guard returns, not their own chunk; code written for 1.1.0
+  (`guard.onChunk(token); yield token`) still runs but gets no hold-back.
+- The `windowSize` option is gone. `holdback` (default 48 characters) controls
+  how much is withheld.
+- On an abort rule the guard throws `GuardAbortError` (with `rule`) itself and
+  stays aborted until `reset()`. `onAbort` now defaults to a no-op; 1.1.0's
+  default threw a plain `Error('[GUARD_ABORT] ...')`. If `onAbort` throws, its
+  error is logged and `GuardAbortError` is thrown instead.
+- Proxy: a request must set `stream: true`; anything else gets a 400.
+- Proxy: `TRIPWIRE_TRUST_PROXY` is a count of reverse proxies (`1`/`true` mean
+  one), and the client IP is read that many entries from the right of
+  `X-Forwarded-For` instead of from the left-most entry.
+- Proxy: `TRIPWIRE_RATE_LIMIT_RPM` must be at least 1; `0` stops the boot.
+- The package ships `dist` only (1.1.0 also shipped `src`).
+
+### Added
+- `SECRET_LEAK` abort rule for API keys and tokens: `sk-` keys, Stripe, GitLab,
+  npm, Slack, AWS, GitHub, Google, JWT, PEM private key headers, Bearer tokens
+  (added 2026-08-05).
+- Hold-back buffer, `flush()`, `GuardAbortError`, `ChunkTooLargeError` and
+  `MAX_CHUNK_CHARS`.
+- Unicode normalization before every match, exported as `normalize`: NFKC,
+  format characters (zero-width and bidi controls) removed, Indic and Arabic
+  digits mapped to ASCII, dash look-alikes mapped to `-`.
+- `checkResponse` throws `InputTooLargeError` above `MAX_CHECK_CHARS` (100,000).
+- Proxy: a content guard and an aux guard per choice; tool-call, refusal and
+  function-call deltas are held back like content and released only once their
+  text is cleared.
+- Proxy: upstream URL pinned and checked at boot (https, no private, loopback,
+  link-local or metadata hosts), body validation, optional proxy token, per-IP
+  rate limit, concurrency cap, per-stream time and size caps, secrets redacted
+  from logs, `x-powered-by` off, custom patterns validated and ReDoS-screened at
+  boot.
+- Proxy: JSON `invalid_request` errors for malformed JSON and bodies over 1 MB;
+  a `message` on upstream failures, which says when the upstream rejected the
+  API key.
+- Proxy: on `SIGTERM`, stop accepting connections and let open streams finish
+  for up to `TRIPWIRE_MAX_STREAM_MS` before exiting.
+
+### Fixed
+- The scan window's left edge could trip a clean stream (the end of
+  `risk-adjusted-return-on-capital` read as an `sk-` key, the last ten digits of
+  a 15-digit id read as a phone number). Rules now see real text before the
+  window.
+- Zero-width padding between the halves of a number released its first half or
+  hid the match; the hold-back and the window now count visible characters.
+- Held tool-call deltas were dropped when the upstream ended without a
+  `finish_reason`.
+- Seven `checkResponse` regexes carried the `g` flag and missed every other call.
+- The phone pattern no longer trips on timestamps or RERA ids.
+- The ReDoS screen read `[]` and `[^]` the POSIX way and missed `[^](a+)+$`; a
+  pattern such as `(a|a)+$` hung the boot instead of failing; `(\d|\d)+$` was
+  not caught at all. Probes now run under a 200 ms timeout and include digit and
+  space runs.
+- The upstream check rejected public names that start like IPv6 prefixes
+  (`fdic.gov`), accepted IPv4-mapped IPv6 spellings of private addresses, and
+  accepted `localhost.` with a trailing dot.
+- The SSE error event for an upstream that breaks mid-stream now carries
+  `upstream_status`, like the 502 body.
 
 ### Changed
-- `checkResponse` refactored into a rule table under `src/check/rules/`.
-- Published package now ships `dist` only, with type declarations.
+- `checkResponse` is split into a rule table under `src/check/rules/`.
 
-## [1.1.0] - 2026-07-18
-
-### Added
-- OpenAI-compatible guarded proxy (`POST /v1/chat/completions`), daemon, and CLI.
-- `SECRET_LEAK` hard-abort pattern.
-- RFC-2 (mid-stream LLM guardrails) design doc.
-
-## [1.0.0] - 2026-05-11
+## [1.1.0] - 2026-06-23
 
 ### Added
-- Initial release on npm as `@ykstormsorg/tripwire`.
+- OpenAI-compatible guarded proxy (`POST /v1/chat/completions`) and the
+  `tripwire-proxy` command; the daemon now serves it. Docker image on GHCR.
+- Publish workflow with npm provenance.
+
+## [1.0.1] - 2026-05-30
+
+### Changed
+- Renamed to `@ykstormsorg/tripwire`. This is the first version on npm.
+
+## [1.0.0] - 2026-05-28
+
+Tagged in git only; never published to npm.
+
+### Added
 - `StreamingGuard` (hard-abort + soft-observe patterns) and `checkResponse`.
 - Pattern library: `CONTACT_LEAK`, `BUSINESS_LEAK`, `PRICE_COMMITMENT_LEAK`,
   `COMMISSION_DISCUSSION_LEAK`, `NO_MARKDOWN`, `PLACEHOLDER_LEAK`.
