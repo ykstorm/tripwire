@@ -2,8 +2,18 @@
 
 Every public claim about Tripwire maps to the file that implements it and the
 test that proves it. If a row cannot be filled, the claim does not ship. References
-are by file rather than line so they do not rot; the test suite is the source of
+are by file rather than line so they do not rot. The test suite is the source of
 truth (112 tests across 13 files, run with `npm test`).
+
+Terms used in the tables. The hold-back is the tail of the stream that the guard
+keeps until later text rules out a match split across chunks. A delta is the small
+piece of the response that each streamed chunk carries. A tool call is a request
+from the model to run a function. SSE (server-sent events) is a way for a server
+to send a stream of `data:` lines over one HTTP response. A zero-width character
+takes no space on screen. ReDoS (regular expression denial of service) is when one
+crafted input makes a regex run so long that it freezes the process. SSRF
+(server-side request forgery) is when an attacker tricks a server into calling an
+address it should not.
 
 ## Streaming guard
 
