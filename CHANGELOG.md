@@ -5,10 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## 2.0.0 - unreleased
 
-Everything in this section is on `main` and not on npm. The published 1.1.0
-(2026-06-23, commit `6a9c4e4`) predates all of it.
+Four changes break the 1.1.0 API. The `windowSize` option is gone, and
+`holdback`, the number of trailing characters the guard withholds, replaces it.
+`onChunk` now returns the text that is safe to forward, so callers must forward
+what it returns and not their own chunk. The default abort error is now
+`GuardAbortError`, which carries a `rule` and has a message such as
+`CONTACT_LEAK: pattern matched in stream`, where 1.1.0 threw a plain `Error`
+whose message began with `[GUARD_ABORT]`. The proxy now answers a request that
+does not set `stream: true` with a JSON 400, where 1.1.0 streamed the reply
+regardless.
+
+Everything below is relative to 1.1.0 (2026-06-23, commit `6a9c4e4`).
 
 ### Changed (breaking)
 - `StreamingGuard.onChunk(chunk)` returns the text that is now safe to forward,

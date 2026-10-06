@@ -126,7 +126,7 @@ npm install && npm run build
 npm run proxy            # defaults to :8080, override with PORT
 
 curl http://localhost:8080/healthz
-# { "ok": true, "version": "1.1.0" }   (version is read from package.json)
+# { "ok": true, "version": "2.0.0" }   (version is read from package.json)
 
 curl -N -X POST http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
