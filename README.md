@@ -164,9 +164,17 @@ data: {"error":"rule_trip","violation":"CONTACT_LEAK: pattern matched in stream"
 ```
 
 Behavior:
-- `401` on missing/invalid `Authorization` (or proxy token, if configured)
-- `400` on an invalid body (not an object, no `messages` array, `n` other than 1)
-- `502` on upstream failure — the client gets `{ "error": "upstream_failure", "upstream_status": <n|null> }`; the full error is logged server-side with secrets redacted
+- `401` on a missing or malformed `Authorization` header (or a wrong proxy token, if configured).
+  The proxy does not check the API key itself; a wrong key is refused by the upstream (see `502`)
+- `400` `{ "error": "invalid_request", "detail": ... }` on an invalid body: not valid JSON, not an
+  object, no `messages` array, `model` not a string of 1 to 200 characters, `n` other than 1;
+  `413` with the same shape for a body over 1 MB
+- `502` when the upstream refuses the request — the client gets
+  `{ "error": "upstream_failure", "upstream_status": <n|null>, "message": ... }`. A wrong API key
+  comes back as `upstream_status: 401` with a message saying the upstream rejected the credential.
+  If the upstream breaks after the stream has started, the same object arrives as the last SSE
+  event (with `upstream_status: null` when there is no status) and there is no `data: [DONE]`.
+  The upstream's own error text is logged server-side with secrets redacted
 - `429` with `Retry-After` when the per-IP rate limit is exceeded; `503` when the global concurrency cap is reached
 - benign prompts stream through and end with `data: [DONE]`
 - extra abort/observe rules via `TRIPWIRE_CUSTOM_PATTERNS` (a JSON array of

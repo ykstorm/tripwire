@@ -90,8 +90,11 @@ Per request the handler (`src/proxy/handlers/chat.ts`):
   a synthesized OpenAI delta chunk.
 - aborts the upstream on a rule trip, a client disconnect, or the per-stream time
   limit; caps total streamed characters; honors SSE backpressure.
-- on failure sends the client only `{ error, upstream_status }`; the full error
-  is logged server-side through `src/proxy/lib/redact.ts`.
+- on an upstream failure sends the client only `{ error, upstream_status, message }`,
+  as a 502 body if the stream has not started and as the last SSE event if it has;
+  the full error is logged server-side through `src/proxy/lib/redact.ts`.
+- answers a body that is not valid JSON, or is over 1 MB, with the same JSON
+  `invalid_request` shape as any other bad body (`src/proxy/server.ts`).
 
 The app disables `x-powered-by`, rate-limits per IP (429 + `Retry-After`), and
 caps concurrent streams (503).

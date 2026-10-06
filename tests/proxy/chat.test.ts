@@ -38,6 +38,36 @@ function failingUpstream(): UpstreamFactory {
   })
 }
 
+/** A factory whose create() rejects the way the OpenAI SDK does for a wrong key. */
+function rejectedKeyUpstream(): UpstreamFactory {
+  return () => ({
+    chat: {
+      completions: {
+        async create() {
+          throw Object.assign(new Error('401 Incorrect API key provided'), { status: 401 })
+        },
+      },
+    },
+  })
+}
+
+/** A factory whose stream sends one token and then breaks. */
+function breakingUpstream(): UpstreamFactory {
+  return () => ({
+    chat: {
+      completions: {
+        async create() {
+          async function* gen() {
+            yield chunk('Hello')
+            throw new Error('socket hang up')
+          }
+          return gen()
+        },
+      },
+    },
+  })
+}
+
 /** Parse an SSE body into the list of JSON data events (excluding [DONE]). */
 function parseSSE(body: string): unknown[] {
   return body
@@ -138,6 +168,46 @@ describe('POST /v1/chat/completions (guarded proxy)', () => {
     const res = await request(app).post('/v1/chat/completions').set(AUTH).send(BODY)
     expect(res.status).toBe(502)
     expect(res.body.error).toBe('upstream_failure')
+  })
+
+  it('(5b) wrong upstream key -> 502 whose body says the upstream rejected the credential', async () => {
+    const app = createProxyServer({ upstreamFactory: rejectedKeyUpstream() })
+    const res = await request(app).post('/v1/chat/completions').set(AUTH).send(BODY)
+    expect(res.status).toBe(502)
+    expect(res.body).toMatchObject({ error: 'upstream_failure', upstream_status: 401 })
+    expect(res.body.message).toMatch(/rejected the credential/)
+  })
+
+  it('(5c) upstream breaks mid-stream -> the error event carries upstream_status: null', async () => {
+    const app = createProxyServer({ upstreamFactory: breakingUpstream() })
+    const res = await request(app).post('/v1/chat/completions').set(AUTH).send(BODY)
+    const failure = parseSSE(res.text).find((e) => (e as { error?: string }).error === 'upstream_failure')
+    expect(failure).toMatchObject({ error: 'upstream_failure', upstream_status: null })
+    expect(res.text).not.toContain('data: [DONE]')
+  })
+
+  it('(6) malformed JSON -> JSON 400, not an HTML page', async () => {
+    const app = createProxyServer({ upstreamFactory: mockUpstream(['hi']) })
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set(AUTH)
+      .set('Content-Type', 'application/json')
+      .send('{"model": "gpt-4o-mini", "messages": [')
+    expect(res.status).toBe(400)
+    expect(res.headers['content-type']).toMatch(/application\/json/)
+    expect(res.body).toEqual({ error: 'invalid_request', detail: 'body is not valid JSON' })
+  })
+
+  it('(6b) body over the 1mb limit -> JSON 413', async () => {
+    const app = createProxyServer({ upstreamFactory: mockUpstream(['hi']) })
+    const big = JSON.stringify({ ...BODY, messages: [{ role: 'user', content: 'x'.repeat(1_100_000) }] })
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set(AUTH)
+      .set('Content-Type', 'application/json')
+      .send(big)
+    expect(res.status).toBe(413)
+    expect(res.body.error).toBe('invalid_request')
   })
 })
 

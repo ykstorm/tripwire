@@ -369,9 +369,9 @@ async function endStreamOnError(
     // Client disconnect or stream-time limit - nothing more to send.
     res.end()
   } else if (!res.headersSent) {
-    res.status(502).json({ error: 'upstream_failure' })
+    res.status(502).json(upstreamFailureBody(err))
   } else {
-    await writeSSE(res, { error: 'upstream_failure' })
+    await writeSSE(res, upstreamFailureBody(err))
     res.end()
   }
   if (!(err instanceof GuardAbortError)) {
@@ -379,9 +379,27 @@ async function endStreamOnError(
   }
 }
 
+/**
+ * What a client is told when the upstream fails, both as the 502 body and as the
+ * last SSE event of a stream that breaks halfway. The upstream's own message
+ * stays in the log. A wrong key reaches the upstream and comes back as a 401;
+ * the proxy keeps answering 502 (it is the upstream that refused), but says so.
+ */
+function upstreamFailureBody(err: unknown): { error: string; upstream_status: number | null; message: string } {
+  const status = (err as { status?: unknown } | null | undefined)?.status
+  const upstreamStatus = typeof status === 'number' ? status : null
+  return {
+    error: 'upstream_failure',
+    upstream_status: upstreamStatus,
+    message:
+      upstreamStatus === 401
+        ? 'the upstream rejected the credential; check the API key sent as the Bearer token'
+        : 'the upstream request failed',
+  }
+}
+
 /** Log a failed upstream open and answer 502. The redacted detail goes to the log only. */
 function replyUpstreamFailure(err: unknown, res: Response, startedAt: number, model: string): void {
-  const status = (err as { status?: number }).status
   logRequest({
     ts: new Date(startedAt).toISOString(),
     route: '/v1/chat/completions',
@@ -392,7 +410,7 @@ function replyUpstreamFailure(err: unknown, res: Response, startedAt: number, mo
     status: 502,
     detail: redactedDetail(err),
   })
-  res.status(502).json({ error: 'upstream_failure', upstream_status: status ?? null })
+  res.status(502).json(upstreamFailureBody(err))
 }
 
 function redactedDetail(err: unknown): string {
