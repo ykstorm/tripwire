@@ -231,6 +231,20 @@ function releaseAux(delta: Delta, aux: string, finished: boolean, index: number,
   if (finished) released += guard.flush()
   queue.releasedChars += released.length
   queue.held.push({ delta: auxDelta(delta), chars: aux.length })
+  return takeReleased(queue)
+}
+
+/** Flush a choice's aux guard and hand back every delta it was still holding. */
+function drainAux(index: number, scan: ScanState): Delta[] {
+  const guard = scan.auxGuards.get(index)
+  const queue = scan.auxQueues.get(index)
+  if (!guard || !queue) return []
+  queue.releasedChars += guard.flush().length
+  return takeReleased(queue)
+}
+
+/** Shift out the held deltas whose text the aux guard has fully released. */
+function takeReleased(queue: AuxQueue): Delta[] {
   const out: Delta[] = []
   while (queue.held.length > 0 && queue.emittedChars + queue.held[0].chars <= queue.releasedChars) {
     const next = queue.held.shift() as HeldAux
@@ -273,7 +287,7 @@ function scanChoice(choice: Choice, scan: ScanState): Choice | undefined {
   const aux = auxText(delta)
   const auxOut = aux ? releaseAux(delta, aux, finished, index, scan) : []
   // A finish with nothing new to scan still releases whatever the aux guard holds.
-  if (!aux && finished && scan.auxQueues.get(index)?.held.length) auxOut.push(...releaseAux({}, '', true, index, scan))
+  if (!aux && finished) auxOut.push(...drainAux(index, scan))
 
   const content = typeof delta.content === 'string' ? delta.content : ''
   scan.contentChars += content.length
@@ -337,11 +351,15 @@ async function streamGuarded(
     }
   }
 
-  // Release any held-back tails before closing.
-  for (const [index, guard] of scan.contentGuards) {
-    const tail = guard.flush()
-    if (!tail) continue
-    await writeSSE(res, { object: 'chat.completion.chunk', choices: [{ index, delta: { content: tail }, finish_reason: null }] })
+  // Release everything still held before closing: content tails and held
+  // tool-call/refusal deltas alike. An upstream that ends without a
+  // finish_reason never triggered the per-choice flush above.
+  const indices = new Set([...scan.contentGuards.keys(), ...scan.auxGuards.keys()])
+  for (const index of indices) {
+    const tail = scan.contentGuards.get(index)?.flush() ?? ''
+    const choice = forwardedChoice(index, {}, tail, drainAux(index, scan), null)
+    if (!choice) continue
+    await writeSSE(res, { object: 'chat.completion.chunk', choices: [choice] })
     outcome.tokensStreamed++
   }
 

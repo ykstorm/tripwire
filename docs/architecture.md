@@ -88,7 +88,9 @@ Per request the handler (`src/proxy/handlers/chat.ts`):
   arguments) through a per-choice guard. Content is forwarded as the guard
   releases it; a refusal, tool-call or function-call delta is held whole until
   the aux guard has released the text up to and including it, then forwarded as
-  a synthesized OpenAI delta chunk.
+  a synthesized OpenAI delta chunk. When the upstream ends, every guard is
+  flushed and whatever is still held goes out before `data: [DONE]`, whether or
+  not the upstream sent a `finish_reason`.
 - aborts the upstream on a rule trip, a client disconnect, or the per-stream time
   limit; caps total streamed characters; honors SSE backpressure.
 - on an upstream failure sends the client only `{ error, upstream_status, message }`,
