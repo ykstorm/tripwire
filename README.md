@@ -185,6 +185,31 @@ Behavior:
 See [DEPLOY.md](./DEPLOY.md) for the container setup and the full environment
 reference.
 
+### Security notes for the proxy
+
+The upstream URL comes only from `TRIPWIRE_UPSTREAM_URL`, and nothing in a
+request can change it. At boot the host is checked by name: loopback, private,
+link-local, CGNAT and cloud metadata addresses are refused, in dotted, numeric,
+hex and IPv4-mapped IPv6 spellings, and so is `localhost` with or without a
+trailing dot. The check never looks up DNS, so a public name that resolves to a
+private address (such as `127.0.0.1.nip.io` or `metadata.google.internal`) is
+out of scope. Pinning the URL in the operator's settings is the main defence;
+the name check catches mistakes.
+
+Rate limiting is per client IP. Leave `TRIPWIRE_TRUST_PROXY` unset unless every
+request reaches Tripwire through your own reverse proxies, and then set it to
+how many there are. Tripwire reads the client address that many entries from
+the right of `X-Forwarded-For`. If clients can reach the port directly, they
+can write that header themselves.
+
+Custom patterns come from the operator, not from requests. Each one is probed
+at boot under a time limit, which catches a pattern that backtracks badly on
+long runs of letters, digits or spaces. That guards against mistakes; it does
+not make an arbitrary regex safe.
+
+Rate limits and the concurrency cap live in one process's memory, so each
+replica keeps its own.
+
 ---
 
 ## API reference

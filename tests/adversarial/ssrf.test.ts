@@ -23,6 +23,13 @@ describe('upstream URL pinning (SSRF guard)', () => {
     }
   })
 
+  it('rejects localhost written with a trailing dot', () => {
+    for (const host of ['https://localhost./v1', 'https://LOCALHOST./v1', 'https://api.localhost./v1']) {
+      expect(() => validateUpstreamUrl(host, strict), host).toThrow(ConfigError)
+    }
+    expect(() => validateUpstreamUrl('https://api.openai.com./v1', strict)).not.toThrow()
+  })
+
   it('rejects IPv4-mapped IPv6 spellings of private and metadata addresses', () => {
     for (const host of ['[::ffff:169.254.169.254]', '[::ffff:127.0.0.1]', '[::ffff:10.0.0.1]', '[fe90::1]', '[fdab::1]']) {
       expect(() => validateUpstreamUrl(`https://${host}/v1`, strict), host).toThrow(ConfigError)

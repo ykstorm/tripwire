@@ -83,7 +83,8 @@ function isPrivateIPv4(parts: number[]): boolean {
 }
 
 function isPrivateHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  // A trailing dot is the same DNS name (`localhost.` is `localhost`).
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.+$/, '')
   if (host === 'localhost' || host.endsWith('.localhost')) return true
   const v4 = ipv4Parts(host)
   if (v4) return isPrivateIPv4(v4)
