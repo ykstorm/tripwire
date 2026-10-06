@@ -156,6 +156,16 @@ describe('POST /v1/chat/completions (guarded proxy)', () => {
     }
   })
 
+  it('(3c) a non-streaming request -> JSON 400 saying the proxy only streams', async () => {
+    const app = createProxyServer({ upstreamFactory: mockUpstream(['hi']) })
+    for (const body of [{ ...BODY, stream: false }, { model: BODY.model, messages: BODY.messages }]) {
+      const res = await request(app).post('/v1/chat/completions').set(AUTH).send(body)
+      expect(res.status).toBe(400)
+      expect(res.body.error).toBe('invalid_request')
+      expect(res.body.detail).toMatch(/only serves streaming/)
+    }
+  })
+
   it('(4) missing auth → 401', async () => {
     const app = createProxyServer({ upstreamFactory: mockUpstream(['hi']) })
     const res = await request(app).post('/v1/chat/completions').send(BODY)

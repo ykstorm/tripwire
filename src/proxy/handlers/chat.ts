@@ -103,10 +103,15 @@ function validateBody(raw: unknown, config: ProxyConfig): Record<string, unknown
   if (typeof body.model !== 'string' || body.model.length === 0 || body.model.length > 200) {
     throw new BadRequestError('model must be a string of 1-200 characters')
   }
+  // The guard works on a stream and the reply is always SSE, so a caller that
+  // asked for one JSON object (stream false or left out) is told so up front
+  // rather than handed SSE text it will not parse.
+  if (body.stream !== true) {
+    throw new BadRequestError('stream must be true - the guarded proxy only serves streaming responses')
+  }
   assertSingleChoice(body.n)
   body.max_tokens = effectiveMaxTokens(body.max_tokens, config.defaultMaxTokens)
   delete body.tripwire
-  body.stream = true
   return body
 }
 

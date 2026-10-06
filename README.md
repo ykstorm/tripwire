@@ -167,8 +167,10 @@ Behavior:
 - `401` on a missing or malformed `Authorization` header (or a wrong proxy token, if configured).
   The proxy does not check the API key itself; a wrong key is refused by the upstream (see `502`)
 - `400` `{ "error": "invalid_request", "detail": ... }` on an invalid body: not valid JSON, not an
-  object, no `messages` array, `model` not a string of 1 to 200 characters, `n` other than 1;
-  `413` with the same shape for a body over 1 MB
+  object, no `messages` array, `model` not a string of 1 to 200 characters, `stream` not `true`,
+  `n` other than 1; `413` with the same shape for a body over 1 MB
+- streaming only: the guard needs a stream, so a request with `stream: false` or no `stream`
+  field is refused with that `400` instead of being answered with SSE the client did not ask for
 - `502` when the upstream refuses the request — the client gets
   `{ "error": "upstream_failure", "upstream_status": <n|null>, "message": ... }`. A wrong API key
   comes back as `upstream_status: 401` with a message saying the upstream rejected the credential.

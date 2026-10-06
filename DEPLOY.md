@@ -94,7 +94,8 @@ spec:
 ```
 
 The app still sends its own key as the Bearer token; the sidecar guards the stream
-and forwards upstream.
+and forwards upstream. Every request must ask for `stream: true`: the proxy only
+serves streams and answers a non-streaming request with a 400.
 
 ---
 

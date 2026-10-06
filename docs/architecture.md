@@ -80,7 +80,8 @@ Per request the handler (`src/proxy/handlers/chat.ts`):
 
 - authenticates the Bearer token (plus an optional proxy token compared with a
   timing-safe equal), and validates the body (object, `messages` array, `model`
-  string, `n` must be 1, `max_tokens` capped).
+  string, `stream` must be `true`, `n` must be 1, `max_tokens` capped). A
+  non-streaming request is refused with a 400 rather than answered with SSE.
 - opens the upstream with an `AbortController` signal, `maxRetries: 0`, and a
   `baseURL` taken from validated config - never from `OPENAI_BASE_URL`.
 - runs every delta string field (content, refusal, tool-call and function-call
