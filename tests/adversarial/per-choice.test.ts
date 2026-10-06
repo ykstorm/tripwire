@@ -54,6 +54,26 @@ describe('per-choice buffering + scanning every delta field', () => {
       })
   })
 
+  it('forwards held tool_call deltas when the upstream ends without a finish_reason', () => {
+    const chunks: UpstreamChunk[] = [
+      { choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call_1', function: { name: 'lookup', arguments: '{"city":' } }] } }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '"Mumbai"}' } }] } }] },
+    ]
+    const app = createProxyServer({ config: makeConfig(), upstreamFactory: mockUpstream(chunks) })
+    return request(app)
+      .post('/v1/chat/completions')
+      .set(AUTH)
+      .send(BODY)
+      .then((res) => {
+        expect(tripOf(res.text)).toBeUndefined()
+        const events = parseSSE(res.text) as Array<{ choices?: Array<{ delta: { tool_calls?: Array<{ id?: string; function?: { arguments?: string } }> } }> }>
+        const calls = events.flatMap((e) => e.choices ?? []).flatMap((c) => c.delta.tool_calls ?? [])
+        expect(calls.map((tc) => tc.function?.arguments ?? '').join('')).toBe('{"city":"Mumbai"}')
+        expect(calls[0]?.id).toBe('call_1')
+        expect(res.text).toContain('data: [DONE]')
+      })
+  })
+
   it('trips on a secret carried in delta.refusal', () => {
     const chunks: UpstreamChunk[] = [
       { choices: [{ index: 0, delta: { refusal: 'I cannot, but the key is sk-proj-AbCdEfGhIjKlMnOpQrStUv123' } }] },

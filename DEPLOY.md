@@ -94,7 +94,8 @@ spec:
 ```
 
 The app still sends its own key as the Bearer token; the sidecar guards the stream
-and forwards upstream.
+and forwards upstream. Every request must ask for `stream: true`: the proxy only
+serves streams and answers a non-streaming request with a 400.
 
 ---
 
@@ -115,8 +116,8 @@ stops the process with a non-zero exit instead of failing mid-request.
 | `TRIPWIRE_MAX_STREAM_MS` | `120000` | Per-stream time cap before the upstream is aborted |
 | `TRIPWIRE_MAX_STREAM_CHARS` | `200000` | Per-stream content cap (`stream_too_large` past it) |
 | `TRIPWIRE_MAX_CONCURRENT_STREAMS` | `32` | Global in-flight cap (503 past it) |
-| `TRIPWIRE_RATE_LIMIT_RPM` | `60` | Per-IP requests/min (429 + `Retry-After` past it) |
-| `TRIPWIRE_TRUST_PROXY` | `0` | Trust `X-Forwarded-For` for the client IP |
+| `TRIPWIRE_RATE_LIMIT_RPM` | `60` | Per-IP requests/min (429 + `Retry-After` past it). Must be at least 1; there is no value that turns the limit off |
+| `TRIPWIRE_TRUST_PROXY` | `0` | Number of reverse proxies in front of Tripwire (`1`/`true` mean one). The client IP is read that many entries from the right of `X-Forwarded-For`. Set it only when every request arrives through those proxies; a client that can reach the port directly can write the header itself |
 | `TRIPWIRE_DEFAULT_MAX_TOKENS` | `4096` | Cap applied to the request `max_tokens` |
 | `TRIPWIRE_LOG_LEVEL` | `info` | `silent` suppresses per-request logs |
 
@@ -141,6 +142,17 @@ curl -N -X POST $HOST/v1/chat/completions \
 ```
 
 ---
+
+## Shutdown
+
+On `SIGTERM` the proxy stops accepting connections, lets the streams that are
+already open finish, and exits once the last one has closed. A stream never runs
+longer than `TRIPWIRE_MAX_STREAM_MS` (120 s by default), so that is the longest
+the drain can take; anything still open after it is closed and the process exits
+with code 1. Give the platform at least that long before it kills the process:
+`docker stop` waits 10 s by default (`--stop-timeout`, or `stop_grace_period` in
+compose, which the bundled `docker-compose.yml` sets to 125 s), and Kubernetes
+waits 30 s (`terminationGracePeriodSeconds`).
 
 ## Observability
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import request from 'supertest'
 import { createProxyServer } from '../../src/proxy/server.js'
+import { loadConfig, ConfigError } from '../../src/proxy/config.js'
 import type { UpstreamChunk, UpstreamFactory } from '../../src/proxy/handlers/chat.js'
 import { makeConfig, mockUpstream, contentChunk, AUTH, BODY } from './helpers.js'
 
@@ -20,6 +21,33 @@ describe('rate limiting', () => {
       }
     }
     expect(codes.filter((c) => c === 429).length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('keys the bucket on the address the trusted proxy saw, not on what the client wrote in X-Forwarded-For', async () => {
+    const config = loadConfig({ TRIPWIRE_TRUST_PROXY: '1', TRIPWIRE_RATE_LIMIT_RPM: '2' } as NodeJS.ProcessEnv)
+    const app = createProxyServer({ config, upstreamFactory: mockUpstream([contentChunk('ok')]) })
+    const codes: number[] = []
+    for (let i = 0; i < 6; i++) {
+      // The client invents a new address each time; the proxy in front appends the real one.
+      const res = await request(app)
+        .post('/v1/chat/completions')
+        .set(AUTH)
+        .set('X-Forwarded-For', `10.0.0.${i}, 203.0.113.7`)
+        .send(BODY)
+      codes.push(res.status)
+    }
+    expect(codes.filter((c) => c === 429)).toHaveLength(4)
+  })
+
+  it('rejects a rate limit of 0 at config time instead of answering Retry-After: Infinity', () => {
+    expect(() => loadConfig({ TRIPWIRE_RATE_LIMIT_RPM: '0' } as NodeJS.ProcessEnv)).toThrow(ConfigError)
+    expect(() => loadConfig({ TRIPWIRE_RATE_LIMIT_RPM: '0' } as NodeJS.ProcessEnv)).toThrow(/TRIPWIRE_RATE_LIMIT_RPM must be at least 1/)
+  })
+
+  it('rejects a TRIPWIRE_TRUST_PROXY value that is neither a flag nor a hop count', () => {
+    expect(() => loadConfig({ TRIPWIRE_TRUST_PROXY: 'loopback' } as NodeJS.ProcessEnv)).toThrow(ConfigError)
+    expect(loadConfig({ TRIPWIRE_TRUST_PROXY: '2' } as NodeJS.ProcessEnv).trustProxyHops).toBe(2)
+    expect(loadConfig({} as NodeJS.ProcessEnv).trustProxyHops).toBe(0)
   })
 
   it('exempts /healthz from the rate limit', async () => {

@@ -7,8 +7,10 @@
 //
 //   1. NFKC - collapses compatibility forms (full-width `９` to `9`, ligatures,
 //      etc.) into their canonical ASCII equivalents.
-//   2. Strip Unicode format characters (\p{Cf}) - removes zero-width spaces,
-//      joiners, and the BOM that can be inserted mid-token.
+//   2. Strip Unicode format characters (\p{Cf}) - removes zero-width spaces
+//      and joiners (U+200B to U+200D, U+2060), the bidi marks and embedding
+//      controls (U+200E, U+200F, U+202A to U+202E), the BOM (U+FEFF) and the
+//      rest of the category, any of which can be inserted mid-token.
 //   3. Map Indic / Arabic decimal digits to ASCII 0-9.
 //   4. Fold dash look-alikes (en dash, em dash, minus sign, ...) to '-'.
 
@@ -42,12 +44,14 @@ function foldDigit(ch: string): string {
 // full-width hyphen-minus U+FF0D, but not these.)
 const DASH_RE = /[‐‑‒–—―⁃−﹘﹣]/g
 
-const FORMAT_RE = /\p{Cf}/gu
+/** Invisible format characters. normalize() deletes them, and the streaming
+ *  guard leaves them out when it counts the hold-back. */
+export const FORMAT_CHARS = /\p{Cf}/gu
 
 export function normalize(text: string): string {
   return text
     .normalize('NFKC')
-    .replace(FORMAT_RE, '')
+    .replace(FORMAT_CHARS, '')
     .replace(DIGIT_RE, foldDigit)
     .replace(DASH_RE, '-')
 }

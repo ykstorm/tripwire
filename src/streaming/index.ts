@@ -17,7 +17,7 @@
 // onChunk throws GuardAbortError the instant a hard-abort pattern matches; the
 // guard latches aborted and every later onChunk throws until reset().
 
-import { normalize } from '../normalize.js'
+import { normalize, FORMAT_CHARS } from '../normalize.js'
 import {
   CONTACT_LEAK_PATTERN,
   SECRET_LEAK_PATTERN,
@@ -37,10 +37,21 @@ export const DEFAULT_HOLDBACK = 48
 /** A single onChunk delta larger than this is rejected (see ChunkTooLargeError). */
 export const MAX_CHUNK_CHARS = 16384
 
-/** Characters of prior context scanned alongside each new chunk. Comfortably
- *  larger than any built-in pattern's span, so a straddling match is caught the
- *  moment its final character arrives without re-scanning the whole buffer. */
+/** Characters of earlier text scanned with each new chunk, so a match that
+ *  straddles chunks is caught when its last character arrives. A rule only sees
+ *  a match that fits inside this overlap plus the new chunk. Every fixed-length
+ *  built-in shape is far shorter (the longest, a GitHub token, is 40
+ *  characters), but the JWT rule has no upper bound: a token whose header and
+ *  payload together run past about 512 characters is never seen whole, so it is
+ *  not caught. */
 const SCAN_OVERLAP = 512
+
+/** Characters before the overlap that the rules can look back at but cannot
+ *  start a match in. Without them a lookbehind, `\b` or a multiline `^` at the
+ *  window's first character sees the start of a string, so the cut-off end of a
+ *  clean word (`sk-adjusted...` out of `risk-adjusted...`) or of a long number
+ *  could match. */
+const EDGE_CONTEXT = 64
 
 /** Fast path: normalization only changes non-ASCII text (code unit >= 0x80,
  *  which also covers astral characters via their surrogate halves). */
@@ -67,8 +78,8 @@ export class ChunkTooLargeError extends Error {
 
 /** Soft-observe handler - called when an observe pattern fires. */
 export type ViolationHandler = (violation: string, pattern: string) => void
-/** Hard-abort handler - called when an abort pattern fires. May throw; the guard
- *  throws GuardAbortError afterwards regardless. */
+/** Hard-abort handler - called when an abort pattern fires. If it throws, the
+ *  guard logs that error and throws GuardAbortError anyway. */
 export type AbortHandler = (violation: string, pattern: string) => void
 
 /** A user-supplied custom pattern entry. */
@@ -92,14 +103,32 @@ export interface StreamingGuardOptions {
 }
 
 interface PatternEntry {
-  pattern: RegExp
+  /** The rule as given, recompiled with only the g flag added: test() then
+   *  starts at lastIndex while lookbehinds still see the text before it. A g
+   *  or y flag on the caller's regex is dropped, so its own lastIndex never
+   *  matters. */
+  scanner: RegExp
   label: string
   mode: 'abort' | 'observe'
+}
+
+function entry({ pattern, label, mode }: CustomPattern): PatternEntry {
+  return { scanner: new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, '') + 'g'), label, mode }
+}
+
+/** Normalization only changes non-ASCII text, so pure ASCII skips it. */
+function prepare(text: string): string {
+  return NON_ASCII.test(text) ? normalize(text) : text
 }
 
 export class StreamingGuard {
   private raw = ''
   private releasedLen = 0
+  /** Already-scanned text with format characters removed: at most
+   *  EDGE_CONTEXT + SCAN_OVERLAP characters. */
+  private recent = ''
+  /** Raw index of every format code unit (zero-width spaces and the like). */
+  private readonly formatAt: number[] = []
   private abortedFlag = false
   private abortRule = 'ABORTED'
   private readonly firedObserve = new Set<string>()
@@ -114,7 +143,7 @@ export class StreamingGuard {
     this.onViolate = options.onViolate ?? (() => {})
     this.onAbort = options.onAbort ?? (() => {})
 
-    this.patterns = [
+    const builtIn: CustomPattern[] = [
       // Safety - hard abort.
       { pattern: SECRET_LEAK_PATTERN, label: 'SECRET_LEAK', mode: 'abort' },
       { pattern: CONTACT_LEAK_PATTERN, label: 'CONTACT_LEAK', mode: 'abort' },
@@ -128,10 +157,8 @@ export class StreamingGuard {
       { pattern: PLACEHOLDER_PRICE_PATTERN, label: 'PLACEHOLDER_LEAK', mode: 'observe' },
       { pattern: PLACEHOLDER_CUID_PATTERN, label: 'PLACEHOLDER_LEAK', mode: 'observe' },
     ]
-
-    if (options.patterns?.length) {
-      this.patterns.push(...options.patterns)
-    }
+    // Custom patterns run after the built-ins, so a built-in abort wins on the same chunk.
+    this.patterns = [...builtIn, ...(options.patterns ?? [])].map(entry)
   }
 
   /** Whether a hard-abort pattern has latched this guard. */
@@ -152,8 +179,9 @@ export class StreamingGuard {
     if (chunk.length > MAX_CHUNK_CHARS) {
       throw new ChunkTooLargeError(chunk.length)
     }
+    const visible = this.stripFormat(chunk)
     this.raw += chunk
-    this.runPatterns(chunk.length)
+    if (visible) this.runPatterns(visible)
     return this.releasable()
   }
 
@@ -170,25 +198,53 @@ export class StreamingGuard {
   reset(): void {
     this.raw = ''
     this.releasedLen = 0
+    this.recent = ''
+    this.formatAt.length = 0
     this.abortedFlag = false
     this.abortRule = 'ABORTED'
     this.violations.length = 0
     this.firedObserve.clear()
   }
 
-  private runPatterns(chunkLen: number): void {
-    // Scan only the new chunk plus enough prior context to catch a straddling
-    // match; normalize only when the window actually holds non-ASCII text.
-    const start = Math.max(0, this.raw.length - chunkLen - SCAN_OVERLAP)
-    const window = this.raw.slice(start)
-    const text = NON_ASCII.test(window) ? normalize(window) : window
-    for (const { pattern, label, mode } of this.patterns) {
-      if (!pattern.test(text)) continue
+  /**
+   * The chunk without format characters (the ones normalize() deletes),
+   * recording where each one sits in the raw stream. The rules never see them,
+   * so the scan window and the hold-back do not count them either: padding a
+   * number with hundreds of zero-width spaces cannot push its first half out
+   * or its start out of the window.
+   */
+  private stripFormat(chunk: string): string {
+    if (!NON_ASCII.test(chunk)) return chunk
+    const base = this.raw.length
+    for (const m of chunk.matchAll(FORMAT_CHARS)) {
+      for (let k = 0; k < m[0].length; k++) this.formatAt.push(base + (m.index ?? 0) + k)
+    }
+    return chunk.replace(FORMAT_CHARS, '')
+  }
+
+  private runPatterns(visible: string): void {
+    // Scan the new text plus SCAN_OVERLAP characters before it. The
+    // EDGE_CONTEXT characters before that are only there for lookbehinds and
+    // anchors: matching starts after them (lastIndex), so a match cannot begin
+    // in text that earlier windows already covered.
+    const contextLen = Math.max(0, this.recent.length - SCAN_OVERLAP)
+    const context = prepare(this.recent.slice(0, contextLen))
+    const text = context + prepare(this.recent.slice(contextLen) + visible)
+    this.recent = (this.recent + visible).slice(-(EDGE_CONTEXT + SCAN_OVERLAP))
+    for (const { scanner, label, mode } of this.patterns) {
+      scanner.lastIndex = context.length
+      if (!scanner.test(text)) continue
       const violation = `${label}: pattern matched in stream`
       if (mode === 'abort') {
         this.abortedFlag = true
         this.abortRule = label
-        this.onAbort(violation, label)
+        try {
+          this.onAbort(violation, label)
+        } catch (err) {
+          // The caller's catch block is written for GuardAbortError; a handler
+          // bug must not replace it.
+          console.error(`[tripwire] onAbort handler threw on ${label}; throwing GuardAbortError instead:`, err)
+        }
         throw new GuardAbortError(violation, label)
       }
       if (!this.firedObserve.has(label)) {
@@ -199,12 +255,32 @@ export class StreamingGuard {
     }
   }
 
+  /** Everything except the last `holdback` visible characters, from where the
+   *  previous release stopped. */
   private releasable(): string {
-    const keep = Math.max(this.releasedLen, this.raw.length - this.holdback)
+    const visibleLen = this.raw.length - this.formatAt.length
+    const keep = this.rawIndexOfVisible(visibleLen - this.holdback)
     if (keep <= this.releasedLen) return ''
     const out = this.raw.slice(this.releasedLen, keep)
     this.releasedLen = keep
     return out
+  }
+
+  /** Raw index of visible code unit `n` (raw.length when n counts them all);
+   *  just n when the stream has no format characters. */
+  private rawIndexOfVisible(n: number): number {
+    const at = this.formatAt
+    if (at.length === 0 || n < 0) return n
+    // at[k] - k is the number of visible units before format unit k; count the
+    // format units that come before visible unit n.
+    let lo = 0
+    let hi = at.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if (at[mid] - mid <= n) lo = mid + 1
+      else hi = mid
+    }
+    return n + lo
   }
 }
 

@@ -164,9 +164,19 @@ data: {"error":"rule_trip","violation":"CONTACT_LEAK: pattern matched in stream"
 ```
 
 Behavior:
-- `401` on missing/invalid `Authorization` (or proxy token, if configured)
-- `400` on an invalid body (not an object, no `messages` array, `n` other than 1)
-- `502` on upstream failure — the client gets `{ "error": "upstream_failure", "upstream_status": <n|null> }`; the full error is logged server-side with secrets redacted
+- `401` on a missing or malformed `Authorization` header (or a wrong proxy token, if configured).
+  The proxy does not check the API key itself; a wrong key is refused by the upstream (see `502`)
+- `400` `{ "error": "invalid_request", "detail": ... }` on an invalid body: not valid JSON, not an
+  object, no `messages` array, `model` not a string of 1 to 200 characters, `stream` not `true`,
+  `n` other than 1; `413` with the same shape for a body over 1 MB
+- streaming only: the guard needs a stream, so a request with `stream: false` or no `stream`
+  field is refused with that `400` instead of being answered with SSE the client did not ask for
+- `502` when the upstream refuses the request — the client gets
+  `{ "error": "upstream_failure", "upstream_status": <n|null>, "message": ... }`. A wrong API key
+  comes back as `upstream_status: 401` with a message saying the upstream rejected the credential.
+  If the upstream breaks after the stream has started, the same object arrives as the last SSE
+  event (with `upstream_status: null` when there is no status) and there is no `data: [DONE]`.
+  The upstream's own error text is logged server-side with secrets redacted
 - `429` with `Retry-After` when the per-IP rate limit is exceeded; `503` when the global concurrency cap is reached
 - benign prompts stream through and end with `data: [DONE]`
 - extra abort/observe rules via `TRIPWIRE_CUSTOM_PATTERNS` (a JSON array of
@@ -174,6 +184,31 @@ Behavior:
 
 See [DEPLOY.md](./DEPLOY.md) for the container setup and the full environment
 reference.
+
+### Security notes for the proxy
+
+The upstream URL comes only from `TRIPWIRE_UPSTREAM_URL`, and nothing in a
+request can change it. At boot the host is checked by name: loopback, private,
+link-local, CGNAT and cloud metadata addresses are refused, in dotted, numeric,
+hex and IPv4-mapped IPv6 spellings, and so is `localhost` with or without a
+trailing dot. The check never looks up DNS, so a public name that resolves to a
+private address (such as `127.0.0.1.nip.io` or `metadata.google.internal`) is
+out of scope. Pinning the URL in the operator's settings is the main defence;
+the name check catches mistakes.
+
+Rate limiting is per client IP. Leave `TRIPWIRE_TRUST_PROXY` unset unless every
+request reaches Tripwire through your own reverse proxies, and then set it to
+how many there are. Tripwire reads the client address that many entries from
+the right of `X-Forwarded-For`. If clients can reach the port directly, they
+can write that header themselves.
+
+Custom patterns come from the operator, not from requests. Each one is probed
+at boot under a time limit, which catches a pattern that backtracks badly on
+long runs of letters, digits or spaces. That guards against mistakes; it does
+not make an arbitrary regex safe.
+
+Rate limits and the concurrency cap live in one process's memory, so each
+replica keeps its own.
 
 ---
 
@@ -184,6 +219,7 @@ reference.
 - `onViolate(violation, pattern)` — called when a soft-observe pattern fires
 - `onAbort(violation, pattern)` — called when a hard-abort pattern fires; the
   guard throws `GuardAbortError` afterwards whether or not this handler throws
+  (an error thrown by the handler is logged with `console.error`, not rethrown)
 - `patterns` — custom patterns **merged with** the built-ins (they do not replace them)
 - `holdback` — characters withheld until following context arrives (default 48)
 
@@ -248,8 +284,11 @@ bin/
   tripwire-proxy.ts   — CLI entrypoint
 ```
 
-The core library (`normalize`, `patterns`, `streaming`, `transitions`, `check`)
-has no runtime dependencies. The proxy pulls in `express` and the `openai` SDK.
+The library code (`normalize`, `patterns`, `streaming`, `transitions`, `check`)
+imports nothing outside Node itself; only the proxy uses `express` and the
+`openai` SDK. Both are still listed as dependencies, because the
+`tripwire-proxy` command ships in the same package, so installing the package
+installs them too.
 
 ---
 
@@ -265,8 +304,17 @@ benchmark workflow fails on a regression past 3x it. Reproduce with:
 npm run build && node bench/per-chunk.mjs   # pure CPU, no API key
 ```
 
-Cost per chunk is bounded by a fixed scan window, so it stays flat regardless of
-response length.
+That benchmark streams a reply of about 2,600 characters, so it shows the cost
+of a normal reply, not of a long one. Cost per chunk is not flat on long
+streams. The rules run on a bounded window, but the guard also keeps the whole
+stream in one string and slices each release out of it. V8 stores a string
+built by repeated `+=` in pieces and can copy the whole of it to take that
+slice, so a chunk late in a long stream can cost far more than one early on.
+How much more depends on the engine's state at the time; repeated runs of the
+same long stream on one machine varied too widely to quote one figure. In the
+proxy, `TRIPWIRE_MAX_STREAM_CHARS` (200,000 by default) caps the stream and with
+it this cost; a library caller that streams very long replies should cap them
+the same way.
 
 ---
 

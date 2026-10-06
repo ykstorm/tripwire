@@ -103,10 +103,15 @@ function validateBody(raw: unknown, config: ProxyConfig): Record<string, unknown
   if (typeof body.model !== 'string' || body.model.length === 0 || body.model.length > 200) {
     throw new BadRequestError('model must be a string of 1-200 characters')
   }
+  // The guard works on a stream and the reply is always SSE, so a caller that
+  // asked for one JSON object (stream false or left out) is told so up front
+  // rather than handed SSE text it will not parse.
+  if (body.stream !== true) {
+    throw new BadRequestError('stream must be true - the guarded proxy only serves streaming responses')
+  }
   assertSingleChoice(body.n)
   body.max_tokens = effectiveMaxTokens(body.max_tokens, config.defaultMaxTokens)
   delete body.tripwire
-  body.stream = true
   return body
 }
 
@@ -226,6 +231,20 @@ function releaseAux(delta: Delta, aux: string, finished: boolean, index: number,
   if (finished) released += guard.flush()
   queue.releasedChars += released.length
   queue.held.push({ delta: auxDelta(delta), chars: aux.length })
+  return takeReleased(queue)
+}
+
+/** Flush a choice's aux guard and hand back every delta it was still holding. */
+function drainAux(index: number, scan: ScanState): Delta[] {
+  const guard = scan.auxGuards.get(index)
+  const queue = scan.auxQueues.get(index)
+  if (!guard || !queue) return []
+  queue.releasedChars += guard.flush().length
+  return takeReleased(queue)
+}
+
+/** Shift out the held deltas whose text the aux guard has fully released. */
+function takeReleased(queue: AuxQueue): Delta[] {
   const out: Delta[] = []
   while (queue.held.length > 0 && queue.emittedChars + queue.held[0].chars <= queue.releasedChars) {
     const next = queue.held.shift() as HeldAux
@@ -268,7 +287,7 @@ function scanChoice(choice: Choice, scan: ScanState): Choice | undefined {
   const aux = auxText(delta)
   const auxOut = aux ? releaseAux(delta, aux, finished, index, scan) : []
   // A finish with nothing new to scan still releases whatever the aux guard holds.
-  if (!aux && finished && scan.auxQueues.get(index)?.held.length) auxOut.push(...releaseAux({}, '', true, index, scan))
+  if (!aux && finished) auxOut.push(...drainAux(index, scan))
 
   const content = typeof delta.content === 'string' ? delta.content : ''
   scan.contentChars += content.length
@@ -332,11 +351,15 @@ async function streamGuarded(
     }
   }
 
-  // Release any held-back tails before closing.
-  for (const [index, guard] of scan.contentGuards) {
-    const tail = guard.flush()
-    if (!tail) continue
-    await writeSSE(res, { object: 'chat.completion.chunk', choices: [{ index, delta: { content: tail }, finish_reason: null }] })
+  // Release everything still held before closing: content tails and held
+  // tool-call/refusal deltas alike. An upstream that ends without a
+  // finish_reason never triggered the per-choice flush above.
+  const indices = new Set([...scan.contentGuards.keys(), ...scan.auxGuards.keys()])
+  for (const index of indices) {
+    const tail = scan.contentGuards.get(index)?.flush() ?? ''
+    const choice = forwardedChoice(index, {}, tail, drainAux(index, scan), null)
+    if (!choice) continue
+    await writeSSE(res, { object: 'chat.completion.chunk', choices: [choice] })
     outcome.tokensStreamed++
   }
 
@@ -369,9 +392,9 @@ async function endStreamOnError(
     // Client disconnect or stream-time limit - nothing more to send.
     res.end()
   } else if (!res.headersSent) {
-    res.status(502).json({ error: 'upstream_failure' })
+    res.status(502).json(upstreamFailureBody(err))
   } else {
-    await writeSSE(res, { error: 'upstream_failure' })
+    await writeSSE(res, upstreamFailureBody(err))
     res.end()
   }
   if (!(err instanceof GuardAbortError)) {
@@ -379,9 +402,27 @@ async function endStreamOnError(
   }
 }
 
+/**
+ * What a client is told when the upstream fails, both as the 502 body and as the
+ * last SSE event of a stream that breaks halfway. The upstream's own message
+ * stays in the log. A wrong key reaches the upstream and comes back as a 401;
+ * the proxy keeps answering 502 (it is the upstream that refused), but says so.
+ */
+function upstreamFailureBody(err: unknown): { error: string; upstream_status: number | null; message: string } {
+  const status = (err as { status?: unknown } | null | undefined)?.status
+  const upstreamStatus = typeof status === 'number' ? status : null
+  return {
+    error: 'upstream_failure',
+    upstream_status: upstreamStatus,
+    message:
+      upstreamStatus === 401
+        ? 'the upstream rejected the credential; check the API key sent as the Bearer token'
+        : 'the upstream request failed',
+  }
+}
+
 /** Log a failed upstream open and answer 502. The redacted detail goes to the log only. */
 function replyUpstreamFailure(err: unknown, res: Response, startedAt: number, model: string): void {
-  const status = (err as { status?: number }).status
   logRequest({
     ts: new Date(startedAt).toISOString(),
     route: '/v1/chat/completions',
@@ -392,7 +433,7 @@ function replyUpstreamFailure(err: unknown, res: Response, startedAt: number, mo
     status: 502,
     detail: redactedDetail(err),
   })
-  res.status(502).json({ error: 'upstream_failure', upstream_status: status ?? null })
+  res.status(502).json(upstreamFailureBody(err))
 }
 
 function redactedDetail(err: unknown): string {

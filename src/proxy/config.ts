@@ -4,6 +4,7 @@
 // URL, a catastrophic custom regex, a malformed pattern blob) is validated here
 // so a bad config stops the process at startup instead of surfacing mid-request.
 
+import { createContext, Script } from 'vm'
 import type { CustomPattern } from '../streaming/index.js'
 
 export interface ProxyConfig {
@@ -14,7 +15,8 @@ export interface ProxyConfig {
   maxStreamChars: number
   maxConcurrentStreams: number
   rateLimitRpm: number
-  trustProxy: boolean
+  /** Reverse proxies in front of this one; 0 means X-Forwarded-For is ignored. */
+  trustProxyHops: number
   proxyToken?: string
   defaultMaxTokens: number
 }
@@ -33,11 +35,31 @@ function envFlag(value: string | undefined): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
 }
 
-function envInt(value: string | undefined, fallback: number): number {
+function envInt(name: string, value: string | undefined, fallback: number, min = 0): number {
   if (value === undefined || value.trim() === '') return fallback
   const n = Number(value)
-  if (!Number.isFinite(n) || n < 0) throw new ConfigError(`invalid integer env value: ${value}`)
-  return Math.floor(n)
+  if (!Number.isFinite(n) || n < 0) throw new ConfigError(`${name} must be a whole number, got ${JSON.stringify(value)}`)
+  const whole = Math.floor(n)
+  if (whole < min) throw new ConfigError(`${name} must be at least ${min}, got ${whole}`)
+  return whole
+}
+
+/**
+ * TRIPWIRE_TRUST_PROXY as a hop count. With N trusted proxies Express takes the
+ * address N entries from the right of X-Forwarded-For, the one the outermost
+ * trusted proxy wrote, so an address the client put in the header is never
+ * used. `trust proxy: true` would take the left-most entry, which the client
+ * controls. A flag word (true/yes/on) means one hop.
+ */
+function envTrustProxyHops(value: string | undefined): number {
+  if (value === undefined) return 0
+  const v = value.trim().toLowerCase()
+  if (['', '0', 'false', 'no', 'off'].includes(v)) return 0
+  if (['true', 'yes', 'on'].includes(v)) return 1
+  if (/^\d+$/.test(v)) return Number(v)
+  throw new ConfigError(
+    `TRIPWIRE_TRUST_PROXY must be the number of reverse proxies in front of tripwire (or 1/true), got ${JSON.stringify(value)}`
+  )
 }
 
 function ipv4Parts(host: string): number[] | null {
@@ -61,7 +83,8 @@ function isPrivateIPv4(parts: number[]): boolean {
 }
 
 function isPrivateHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  // A trailing dot is the same DNS name (`localhost.` is `localhost`).
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.+$/, '')
   if (host === 'localhost' || host.endsWith('.localhost')) return true
   const v4 = ipv4Parts(host)
   if (v4) return isPrivateIPv4(v4)
@@ -224,20 +247,45 @@ export function maxStarHeight(source: string): number {
   return parseAlt()
 }
 
+/** Long runs of letters, digits and spaces, with and without an end that
+ *  makes the match fail, which is where backtracking blows up. */
+const REDOS_PROBES = [
+  'a'.repeat(100_000),
+  'a'.repeat(100_000) + '!',
+  'a0'.repeat(50_000) + '!',
+  '0'.repeat(100_000) + '!',
+  ' '.repeat(100_000) + '!',
+]
+
+/** A probe that takes longer than this is too slow to run on every chunk. */
+const PROBE_SLOW_MS = 20
+
+/** A probe still running after this is stopped. A timer cannot interrupt a
+ *  test() that never returns, but a vm script's timeout can, so the probe
+ *  runs in a vm context and a pattern such as (a|a)+$ fails the boot in
+ *  about this long instead of hanging it. */
+const PROBE_TIMEOUT_MS = 200
+
+// Times only the test() call; starting the vm timeout's watchdog thread is
+// not the pattern's cost and can take several milliseconds on a busy machine.
+const PROBE_SCRIPT = new Script('(() => { pattern.lastIndex = 0; const t0 = now(); pattern.test(probe); return now() - t0 })()')
+
 function screenForRedos(pattern: RegExp, label: string): void {
-  const probes = [
-    'a'.repeat(100_000),
-    'a'.repeat(100_000) + '!',
-    ('a' + '0').repeat(50_000) + '!',
-  ]
-  for (const probe of probes) {
-    const t0 = process.hrtime.bigint()
-    pattern.lastIndex = 0
-    pattern.test(probe)
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6
-    if (ms > 20) {
+  const context = createContext({ pattern, probe: '', now: () => performance.now() })
+  for (const probe of REDOS_PROBES) {
+    context.probe = probe
+    let ms: number
+    try {
+      ms = PROBE_SCRIPT.runInContext(context, { timeout: PROBE_TIMEOUT_MS }) as number
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'ERR_SCRIPT_EXECUTION_TIMEOUT') throw err
       throw new ConfigError(
-        `custom pattern "${label}" is too slow (${ms.toFixed(1)}ms on a 100k probe) - likely catastrophic backtracking`
+        `custom pattern "${label}" did not finish a ${probe.length}-character probe within ${PROBE_TIMEOUT_MS}ms - likely catastrophic backtracking`
+      )
+    }
+    if (ms > PROBE_SLOW_MS) {
+      throw new ConfigError(
+        `custom pattern "${label}" is too slow (${ms.toFixed(1)}ms on a ${probe.length}-character probe) - likely catastrophic backtracking`
       )
     }
   }
@@ -292,13 +340,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   return {
     upstreamUrl,
     customPatterns: parseCustomPatterns(env.TRIPWIRE_CUSTOM_PATTERNS),
-    holdback: envInt(env.TRIPWIRE_HOLDBACK, 48),
-    maxStreamMs: envInt(env.TRIPWIRE_MAX_STREAM_MS, 120_000),
-    maxStreamChars: envInt(env.TRIPWIRE_MAX_STREAM_CHARS, 200_000),
-    maxConcurrentStreams: envInt(env.TRIPWIRE_MAX_CONCURRENT_STREAMS, 32),
-    rateLimitRpm: envInt(env.TRIPWIRE_RATE_LIMIT_RPM, 60),
-    trustProxy: envFlag(env.TRIPWIRE_TRUST_PROXY),
+    holdback: envInt('TRIPWIRE_HOLDBACK', env.TRIPWIRE_HOLDBACK, 48),
+    maxStreamMs: envInt('TRIPWIRE_MAX_STREAM_MS', env.TRIPWIRE_MAX_STREAM_MS, 120_000),
+    maxStreamChars: envInt('TRIPWIRE_MAX_STREAM_CHARS', env.TRIPWIRE_MAX_STREAM_CHARS, 200_000),
+    maxConcurrentStreams: envInt('TRIPWIRE_MAX_CONCURRENT_STREAMS', env.TRIPWIRE_MAX_CONCURRENT_STREAMS, 32),
+    // 0 would answer every request with 429 and Retry-After: Infinity; there is no "off" value.
+    rateLimitRpm: envInt('TRIPWIRE_RATE_LIMIT_RPM', env.TRIPWIRE_RATE_LIMIT_RPM, 60, 1),
+    trustProxyHops: envTrustProxyHops(env.TRIPWIRE_TRUST_PROXY),
     proxyToken: env.TRIPWIRE_PROXY_TOKEN?.trim() || undefined,
-    defaultMaxTokens: envInt(env.TRIPWIRE_DEFAULT_MAX_TOKENS, 4096),
+    defaultMaxTokens: envInt('TRIPWIRE_DEFAULT_MAX_TOKENS', env.TRIPWIRE_DEFAULT_MAX_TOKENS, 4096),
   }
 }

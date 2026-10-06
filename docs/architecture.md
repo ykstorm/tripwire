@@ -40,10 +40,15 @@ A phone number split across three chunks:
    (default 48). `flush()` releases the held tail at the end, and returns nothing
    once aborted (the held tail may precede the violation).
 
-Because the scan window is bounded, per-chunk cost does not grow with response
-length. Because matching runs on normalized text, unicode evasions (zero-width
-splits, non-ASCII digits, dash look-alikes) are folded away first
-(`src/normalize.ts`).
+The rules run on a bounded window, but per-chunk cost still grows on long
+streams: the guard keeps the whole stream in one string and slices each release
+out of it, and V8 can copy the whole string to take that slice. The proxy caps a
+stream at `TRIPWIRE_MAX_STREAM_CHARS` (200,000 characters by default), which
+bounds that cost; the README's Performance section has the details. Because
+matching runs on normalized text, unicode evasions (zero-width splits,
+non-ASCII digits, dash look-alikes) are folded away first (`src/normalize.ts`).
+Format characters such as zero-width spaces are left out when the window and
+the hold-back are counted, so padding cannot push part of a match out.
 
 ### Why the hold-back matters
 
@@ -80,18 +85,24 @@ Per request the handler (`src/proxy/handlers/chat.ts`):
 
 - authenticates the Bearer token (plus an optional proxy token compared with a
   timing-safe equal), and validates the body (object, `messages` array, `model`
-  string, `n` must be 1, `max_tokens` capped).
+  string, `stream` must be `true`, `n` must be 1, `max_tokens` capped). A
+  non-streaming request is refused with a 400 rather than answered with SSE.
 - opens the upstream with an `AbortController` signal, `maxRetries: 0`, and a
   `baseURL` taken from validated config - never from `OPENAI_BASE_URL`.
 - runs every delta string field (content, refusal, tool-call and function-call
   arguments) through a per-choice guard. Content is forwarded as the guard
   releases it; a refusal, tool-call or function-call delta is held whole until
   the aux guard has released the text up to and including it, then forwarded as
-  a synthesized OpenAI delta chunk.
+  a synthesized OpenAI delta chunk. When the upstream ends, every guard is
+  flushed and whatever is still held goes out before `data: [DONE]`, whether or
+  not the upstream sent a `finish_reason`.
 - aborts the upstream on a rule trip, a client disconnect, or the per-stream time
   limit; caps total streamed characters; honors SSE backpressure.
-- on failure sends the client only `{ error, upstream_status }`; the full error
-  is logged server-side through `src/proxy/lib/redact.ts`.
+- on an upstream failure sends the client only `{ error, upstream_status, message }`,
+  as a 502 body if the stream has not started and as the last SSE event if it has;
+  the full error is logged server-side through `src/proxy/lib/redact.ts`.
+- answers a body that is not valid JSON, or is over 1 MB, with the same JSON
+  `invalid_request` shape as any other bad body (`src/proxy/server.ts`).
 
 The app disables `x-powered-by`, rate-limits per IP (429 + `Retry-After`), and
 caps concurrent streams (503).
@@ -106,8 +117,10 @@ caps concurrent streams (503).
   - this is the SSRF guard.
 - custom patterns are parsed from `TRIPWIRE_CUSTOM_PATTERNS`: invalid JSON, a
   disallowed flag, a nested-quantifier (star height > 1), or a pattern that is
-  slow on an adversarial probe all stop the process at boot rather than surfacing
-  mid-request.
+  slow on an adversarial probe (long runs of letters, digits or spaces) all stop
+  the process at boot rather than surfacing mid-request. Each probe runs in a
+  `vm` context with a 200 ms timeout, so a pattern such as `(a|a)+$` that would
+  never finish fails the boot instead of hanging it.
 
 See [DEPLOY.md](../DEPLOY.md) for the full environment reference.
 

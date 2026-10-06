@@ -43,6 +43,28 @@ function rateLimiter(rpm: number) {
   }
 }
 
+const BODY_LIMIT = '1mb'
+
+/**
+ * Body-parser failures (malformed JSON, a body over the limit) in the same JSON
+ * shape the chat handler uses for a bad body, instead of Express's HTML page.
+ * Anything else goes on to Express's default handler.
+ */
+function bodyErrorHandler(err: unknown, _req: Request, res: Response, next: NextFunction): void {
+  const { type, status } = (err ?? {}) as { type?: string; status?: number }
+  if (res.headersSent || typeof status !== 'number' || status < 400 || status >= 500) {
+    next(err)
+    return
+  }
+  const detail =
+    type === 'entity.parse.failed'
+      ? 'body is not valid JSON'
+      : type === 'entity.too.large'
+        ? `body is larger than ${BODY_LIMIT}`
+        : 'body could not be read'
+  res.status(status).json({ error: 'invalid_request', detail })
+}
+
 /** Global in-flight stream limiter. */
 function concurrencyLimiter(max: number) {
   let active = 0
@@ -68,8 +90,10 @@ export function createProxyServer(options: ProxyServerOptions = {}): Express {
   const config = options.config ?? loadConfig()
   const app = express()
   app.disable('x-powered-by')
-  if (config.trustProxy) app.set('trust proxy', true)
-  app.use(express.json({ limit: '1mb' }))
+  // A hop count, never `true`: `true` takes the left-most X-Forwarded-For entry,
+  // which the client writes itself.
+  if (config.trustProxyHops > 0) app.set('trust proxy', config.trustProxyHops)
+  app.use(express.json({ limit: BODY_LIMIT }))
 
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true, version: pkg.version })
@@ -81,6 +105,7 @@ export function createProxyServer(options: ProxyServerOptions = {}): Express {
     concurrencyLimiter(config.maxConcurrentStreams),
     makeChatHandler(config, options.upstreamFactory)
   )
+  app.use(bodyErrorHandler)
 
   return app
 }
