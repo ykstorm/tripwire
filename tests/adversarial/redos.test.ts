@@ -26,6 +26,17 @@ describe('custom pattern loading is fail-fast', () => {
     expect(() => parseCustomPatterns(blob)).toThrow(ConfigError)
   })
 
+  it('fails fast on a pattern whose probe would never finish, instead of hanging the boot', () => {
+    // Both pass the star-height walk (height 1); the probe is what catches them.
+    for (const source of ['(a|a)+$', '(\\d|\\d)+$']) {
+      expect(maxStarHeight(source)).toBe(1)
+      const blob = JSON.stringify([{ source, label: 'SLOW', mode: 'abort' }])
+      const t0 = Date.now()
+      expect(() => parseCustomPatterns(blob), source).toThrow(ConfigError)
+      expect(Date.now() - t0, source).toBeLessThan(3000)
+    }
+  })
+
   it('rejects disallowed flags (g, y)', () => {
     const g = JSON.stringify([{ source: 'abc', flags: 'g', label: 'X', mode: 'observe' }])
     const y = JSON.stringify([{ source: 'abc', flags: 'y', label: 'X', mode: 'observe' }])

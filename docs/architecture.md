@@ -112,8 +112,10 @@ caps concurrent streams (503).
   - this is the SSRF guard.
 - custom patterns are parsed from `TRIPWIRE_CUSTOM_PATTERNS`: invalid JSON, a
   disallowed flag, a nested-quantifier (star height > 1), or a pattern that is
-  slow on an adversarial probe all stop the process at boot rather than surfacing
-  mid-request.
+  slow on an adversarial probe (long runs of letters, digits or spaces) all stop
+  the process at boot rather than surfacing mid-request. Each probe runs in a
+  `vm` context with a 200 ms timeout, so a pattern such as `(a|a)+$` that would
+  never finish fails the boot instead of hanging it.
 
 See [DEPLOY.md](../DEPLOY.md) for the full environment reference.
 

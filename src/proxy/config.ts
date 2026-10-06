@@ -4,6 +4,7 @@
 // URL, a catastrophic custom regex, a malformed pattern blob) is validated here
 // so a bad config stops the process at startup instead of surfacing mid-request.
 
+import { createContext, Script } from 'vm'
 import type { CustomPattern } from '../streaming/index.js'
 
 export interface ProxyConfig {
@@ -245,20 +246,44 @@ export function maxStarHeight(source: string): number {
   return parseAlt()
 }
 
+/** Long runs of letters, digits and spaces, with and without an end that
+ *  makes the match fail, which is where backtracking blows up. */
+const REDOS_PROBES = [
+  'a'.repeat(100_000),
+  'a'.repeat(100_000) + '!',
+  'a0'.repeat(50_000) + '!',
+  '0'.repeat(100_000) + '!',
+  ' '.repeat(100_000) + '!',
+]
+
+/** A probe that takes longer than this is too slow to run on every chunk. */
+const PROBE_SLOW_MS = 20
+
+/** A probe still running after this is stopped. A timer cannot interrupt a
+ *  test() that never returns, but a vm script's timeout can, so the probe
+ *  runs in a vm context and a pattern such as (a|a)+$ fails the boot in
+ *  about this long instead of hanging it. */
+const PROBE_TIMEOUT_MS = 200
+
+const PROBE_SCRIPT = new Script('pattern.lastIndex = 0; pattern.test(probe)')
+
 function screenForRedos(pattern: RegExp, label: string): void {
-  const probes = [
-    'a'.repeat(100_000),
-    'a'.repeat(100_000) + '!',
-    ('a' + '0').repeat(50_000) + '!',
-  ]
-  for (const probe of probes) {
+  const context = createContext({ pattern, probe: '' })
+  for (const probe of REDOS_PROBES) {
+    context.probe = probe
     const t0 = process.hrtime.bigint()
-    pattern.lastIndex = 0
-    pattern.test(probe)
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6
-    if (ms > 20) {
+    try {
+      PROBE_SCRIPT.runInContext(context, { timeout: PROBE_TIMEOUT_MS })
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'ERR_SCRIPT_EXECUTION_TIMEOUT') throw err
       throw new ConfigError(
-        `custom pattern "${label}" is too slow (${ms.toFixed(1)}ms on a 100k probe) - likely catastrophic backtracking`
+        `custom pattern "${label}" did not finish a ${probe.length}-character probe within ${PROBE_TIMEOUT_MS}ms - likely catastrophic backtracking`
+      )
+    }
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6
+    if (ms > PROBE_SLOW_MS) {
+      throw new ConfigError(
+        `custom pattern "${label}" is too slow (${ms.toFixed(1)}ms on a ${probe.length}-character probe) - likely catastrophic backtracking`
       )
     }
   }
