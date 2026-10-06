@@ -25,3 +25,6 @@ services:
       retries: 3
       start_period: 8s
     restart: unless-stopped
+    # On SIGTERM the proxy drains open streams for up to TRIPWIRE_MAX_STREAM_MS
+    # (120 s by default); give it that long before Docker kills it.
+    stop_grace_period: 125s

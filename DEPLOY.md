@@ -143,6 +143,17 @@ curl -N -X POST $HOST/v1/chat/completions \
 
 ---
 
+## Shutdown
+
+On `SIGTERM` the proxy stops accepting connections, lets the streams that are
+already open finish, and exits once the last one has closed. A stream never runs
+longer than `TRIPWIRE_MAX_STREAM_MS` (120 s by default), so that is the longest
+the drain can take; anything still open after it is closed and the process exits
+with code 1. Give the platform at least that long before it kills the process:
+`docker stop` waits 10 s by default (`--stop-timeout`, or `stop_grace_period` in
+compose, which the bundled `docker-compose.yml` sets to 125 s), and Kubernetes
+waits 30 s (`terminationGracePeriodSeconds`).
+
 ## Observability
 
 Logs are one JSON line per request on stdout/stderr (latency, tokens streamed,
