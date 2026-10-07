@@ -3,7 +3,7 @@
 Every public claim about Tripwire maps to the file that implements it and the
 test that proves it. If a row cannot be filled, the claim does not ship. References
 are by file rather than line so they do not rot. The test suite is the source of
-truth (112 tests across 13 files, run with `npm test`).
+truth (134 tests across 14 files, run with `npm test`).
 
 Terms used in the tables. The hold-back is the tail of the stream that the guard
 keeps until later text rules out a match split across chunks. A delta is the small
@@ -25,6 +25,8 @@ address it should not.
 | Soft-observe patterns record one violation per label without throwing | `src/streaming/index.ts` | `tests/streaming.test.ts`, `tests/adversarial/abort-correctness.test.ts` |
 | A single oversized chunk is rejected (`CHUNK_TOO_LARGE`) | `src/streaming/index.ts` | `tests/adversarial/redos.test.ts` |
 | Custom patterns merge with the built-ins and fire | `src/streaming/index.ts` | `tests/proxy/chat.test.ts`, `scripts/smoke-test.js` |
+| `builtinRules` keeps every built-in by default, runs only the caller's patterns for `false`, keeps exactly the listed labels, and throws on an unknown label | `src/streaming/index.ts` | `tests/streaming.test.ts` |
+| The hold-back does not change with the rule set | `src/streaming/index.ts` | `tests/adversarial/holdback.test.ts` |
 
 ## Post-hoc audit (`checkResponse`)
 
@@ -44,6 +46,7 @@ address it should not.
 | Scans every delta field per choice; rejects `n > 1` | `src/proxy/handlers/chat.ts` | `tests/adversarial/per-choice.test.ts` |
 | Upstream URL is pinned; SSRF addresses rejected at boot | `src/proxy/config.ts` | `tests/adversarial/ssrf.test.ts` |
 | Custom patterns fail fast on bad JSON / flags / ReDoS shape | `src/proxy/config.ts` | `tests/adversarial/redos.test.ts` |
+| `TRIPWIRE_BUILTIN_RULES` (`all`, `none` or a label list) reaches the content and tool-call guards; a bad value fails the boot | `src/proxy/config.ts`, `src/proxy/handlers/chat.ts` | `tests/proxy/builtin-rules.test.ts` |
 | Secrets redacted from logs; client sees only `{error, upstream_status}` | `src/proxy/lib/redact.ts`, `src/proxy/handlers/chat.ts` | `tests/adversarial/redaction.test.ts` |
 | `x-powered-by` disabled | `src/proxy/server.ts` | `tests/adversarial/redaction.test.ts` |
 | Per-IP rate limit (429) and global concurrency cap (503) | `src/proxy/server.ts` | `tests/adversarial/rate-limit.test.ts` |

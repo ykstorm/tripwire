@@ -89,6 +89,21 @@ export interface CustomPattern {
   mode: 'abort' | 'observe'
 }
 
+/** Labels of the built-in rules, in the order they run. A label can stand for
+ *  more than one rule (PRICE_COMMITMENT_LEAK and PLACEHOLDER_LEAK each cover
+ *  several patterns); choosing the label keeps all of them. */
+export const BUILTIN_RULE_LABELS = [
+  'SECRET_LEAK',
+  'CONTACT_LEAK',
+  'BUSINESS_LEAK',
+  'PRICE_COMMITMENT_LEAK',
+  'COMMISSION_DISCUSSION_LEAK',
+  'NO_MARKDOWN',
+  'PLACEHOLDER_LEAK',
+] as const
+
+export type BuiltinRuleLabel = (typeof BUILTIN_RULE_LABELS)[number]
+
 export interface StreamingGuardOptions {
   /** Called when a soft-observe pattern fires. Default: no-op. */
   onViolate?: ViolationHandler
@@ -96,9 +111,17 @@ export interface StreamingGuardOptions {
    *  always thrown by the guard itself). */
   onAbort?: AbortHandler
   /** Custom patterns MERGED after the built-ins, so a built-in abort still wins
-   *  on the same chunk but every custom pattern genuinely fires. */
+   *  on the same chunk but every custom pattern genuinely fires. With
+   *  builtinRules narrowed or off they are the only rules left to run. */
   patterns?: CustomPattern[]
-  /** Characters held back until following context arrives. Default DEFAULT_HOLDBACK. */
+  /** Which built-in rules run. `true` (the default) runs all of them. `false`
+   *  runs only `patterns`. An array of labels from BUILTIN_RULE_LABELS runs
+   *  just the built-in rules with those labels. A label not in that list throws
+   *  when the guard is built. `[]` is the same as `false`. */
+  builtinRules?: boolean | readonly BuiltinRuleLabel[]
+  /** Characters held back until following context arrives. Default
+   *  DEFAULT_HOLDBACK. A fixed number: it does not follow the rule set, so size
+   *  it for the longest match your own patterns can make. */
   holdback?: number
 }
 
@@ -119,6 +142,45 @@ function entry({ pattern, label, mode }: CustomPattern): PatternEntry {
 /** Normalization only changes non-ASCII text, so pure ASCII skips it. */
 function prepare(text: string): string {
   return NON_ASCII.test(text) ? normalize(text) : text
+}
+
+interface BuiltinRule extends CustomPattern {
+  label: BuiltinRuleLabel
+}
+
+const BUILTIN_RULES: readonly BuiltinRule[] = [
+  // Safety - hard abort.
+  { pattern: SECRET_LEAK_PATTERN, label: 'SECRET_LEAK', mode: 'abort' },
+  { pattern: CONTACT_LEAK_PATTERN, label: 'CONTACT_LEAK', mode: 'abort' },
+  { pattern: BUSINESS_LEAK_PATTERN, label: 'BUSINESS_LEAK', mode: 'abort' },
+  // Content quality - soft observe.
+  { pattern: PRICE_DISCOUNT_COMMIT_PATTERN, label: 'PRICE_COMMITMENT_LEAK', mode: 'observe' },
+  { pattern: PRICE_FINAL_COMMIT_PATTERN, label: 'PRICE_COMMITMENT_LEAK', mode: 'observe' },
+  { pattern: COMMISSION_PATTERN, label: 'COMMISSION_DISCUSSION_LEAK', mode: 'observe' },
+  { pattern: MARKDOWN_PATTERN, label: 'NO_MARKDOWN', mode: 'observe' },
+  { pattern: PLACEHOLDER_NAME_PATTERN, label: 'PLACEHOLDER_LEAK', mode: 'observe' },
+  { pattern: PLACEHOLDER_PRICE_PATTERN, label: 'PLACEHOLDER_LEAK', mode: 'observe' },
+  { pattern: PLACEHOLDER_CUID_PATTERN, label: 'PLACEHOLDER_LEAK', mode: 'observe' },
+]
+
+/** The built-in rules a guard runs for a builtinRules option, in their usual
+ *  order. Anything that is not a boolean or a list of known labels throws, so a
+ *  misspelt label cannot leave a rule off without anyone noticing. */
+function selectBuiltinRules(choice: unknown): readonly BuiltinRule[] {
+  if (choice === true) return BUILTIN_RULES
+  if (choice === false) return []
+  const valid = BUILTIN_RULE_LABELS.join(', ')
+  if (!Array.isArray(choice)) {
+    throw new Error(`builtinRules must be true, false or an array of rule labels (valid labels: ${valid})`)
+  }
+  const unknown = choice.filter((label) => !(BUILTIN_RULE_LABELS as readonly unknown[]).includes(label))
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown built-in rule label ${unknown.map((label) => String(JSON.stringify(label))).join(', ')} in builtinRules (valid labels: ${valid})`
+    )
+  }
+  const keep = new Set<unknown>(choice)
+  return BUILTIN_RULES.filter((rule) => keep.has(rule.label))
 }
 
 export class StreamingGuard {
@@ -143,20 +205,7 @@ export class StreamingGuard {
     this.onViolate = options.onViolate ?? (() => {})
     this.onAbort = options.onAbort ?? (() => {})
 
-    const builtIn: CustomPattern[] = [
-      // Safety - hard abort.
-      { pattern: SECRET_LEAK_PATTERN, label: 'SECRET_LEAK', mode: 'abort' },
-      { pattern: CONTACT_LEAK_PATTERN, label: 'CONTACT_LEAK', mode: 'abort' },
-      { pattern: BUSINESS_LEAK_PATTERN, label: 'BUSINESS_LEAK', mode: 'abort' },
-      // Content quality - soft observe.
-      { pattern: PRICE_DISCOUNT_COMMIT_PATTERN, label: 'PRICE_COMMITMENT_LEAK', mode: 'observe' },
-      { pattern: PRICE_FINAL_COMMIT_PATTERN, label: 'PRICE_COMMITMENT_LEAK', mode: 'observe' },
-      { pattern: COMMISSION_PATTERN, label: 'COMMISSION_DISCUSSION_LEAK', mode: 'observe' },
-      { pattern: MARKDOWN_PATTERN, label: 'NO_MARKDOWN', mode: 'observe' },
-      { pattern: PLACEHOLDER_NAME_PATTERN, label: 'PLACEHOLDER_LEAK', mode: 'observe' },
-      { pattern: PLACEHOLDER_PRICE_PATTERN, label: 'PLACEHOLDER_LEAK', mode: 'observe' },
-      { pattern: PLACEHOLDER_CUID_PATTERN, label: 'PLACEHOLDER_LEAK', mode: 'observe' },
-    ]
+    const builtIn = selectBuiltinRules(options.builtinRules ?? true)
     // Custom patterns run after the built-ins, so a built-in abort wins on the same chunk.
     this.patterns = [...builtIn, ...(options.patterns ?? [])].map(entry)
   }

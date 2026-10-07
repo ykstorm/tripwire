@@ -59,7 +59,7 @@ These patterns only observe. A match records a violation and never blocks the st
 - `PRICE_COMMITMENT_LEAK` / `COMMISSION_DISCUSSION_LEAK`: committed discounts or quoted commission percentages
 - `NO_MARKDOWN`: markdown bullets, bold and headers. The ``` fence markers themselves do not match, but a bullet or header line inside a fence does.
 
-Hard-abort is reserved for irreversible leaks. Promote an observe pattern or add your own with `TRIPWIRE_CUSTOM_PATTERNS`.
+Hard-abort is reserved for irreversible leaks. Promote an observe pattern or add your own with `TRIPWIRE_CUSTOM_PATTERNS`. To run only your own rules, or to keep just some of the built-in ones, use the `builtinRules` option (library) or `TRIPWIRE_BUILTIN_RULES` (proxy).
 
 ### Unicode normalization
 
@@ -149,6 +149,7 @@ The proxy behaves like this:
 - `429` with `Retry-After` when the per-IP rate limit is exceeded. `503` when the global concurrency cap is reached.
 - Benign prompts stream through and end with `data: [DONE]`.
 - Extra abort and observe rules come from `TRIPWIRE_CUSTOM_PATTERNS`, a JSON array of `{ "source", "flags", "label", "mode" }`. They are validated and screened at boot.
+- `TRIPWIRE_BUILTIN_RULES` chooses which built-in rules run: `all` (the default), `none` (only the custom patterns run), or a comma list of labels to keep, such as `SECRET_LEAK,CONTACT_LEAK`. An unknown label stops the boot, and the error lists the valid ones.
 
 See [DEPLOY.md](./DEPLOY.md) for the container setup and the full environment reference.
 
@@ -170,8 +171,9 @@ Rate limits and the concurrency cap live in one process's memory, so each replic
 
 - `onViolate(violation, pattern)`: called when a soft-observe pattern fires.
 - `onAbort(violation, pattern)`: called when a hard-abort pattern fires. The guard throws `GuardAbortError` afterwards whether or not this handler throws. An error thrown by the handler is logged with `console.error`, not rethrown.
-- `patterns`: custom patterns merged with the built-ins. They do not replace them.
-- `holdback`: characters withheld until following context arrives (default 48).
+- `patterns`: custom patterns. They run after the built-in rules, so a built-in abort wins on the same chunk. They do not replace the built-ins unless you also set `builtinRules`.
+- `builtinRules`: which built-in rules run. `true` (the default) runs all of them. `false` runs only your `patterns`. An array of labels, such as `['SECRET_LEAK']`, keeps just the built-in rules with those labels. The labels are `SECRET_LEAK`, `CONTACT_LEAK`, `BUSINESS_LEAK`, `PRICE_COMMITMENT_LEAK`, `COMMISSION_DISCUSSION_LEAK`, `NO_MARKDOWN` and `PLACEHOLDER_LEAK`, also exported as `BUILTIN_RULE_LABELS`. A label can cover more than one rule, and naming it keeps all of them. An unknown label throws when the guard is built, and the message lists the valid ones. `[]` is the same as `false`. With `false` and no `patterns`, nothing is checked.
+- `holdback`: characters withheld until following context arrives (default 48). It is a fixed number and does not follow the rule set, so turning the built-ins off leaves it at 48. If your own patterns can match a long string, set it to at least one less than the longest match they can make.
 
 The instance has these members:
 
@@ -183,7 +185,7 @@ The instance has these members:
 
 ### `checkResponse(text, options?)`
 
-Returns `{ passed: boolean, violations: string[] }`. Throws `InputTooLargeError` if `text` exceeds `MAX_CHECK_CHARS` (100k). Options: `knownProjectNames`, `knownBuilderNames`, `unverifiedProjectNames`, `buyerMessage`, `classified` (`{ intent, persona }`).
+Returns `{ passed: boolean, violations: string[] }`. Throws `InputTooLargeError` if `text` exceeds `MAX_CHECK_CHARS` (100k). Options: `knownProjectNames`, `knownBuilderNames`, `unverifiedProjectNames`, `buyerMessage`, `classified` (`{ intent, persona }`). It runs a fixed table of rules and has no `builtinRules` or `patterns` option.
 
 ### Status transition validation
 

@@ -50,7 +50,7 @@ The scan window is bounded so the matching cost does not grow with response leng
 
 A pattern is a compiled regex plus a label plus a mode (`abort | observe`). Default patterns cover contact-info leaks and business-sensitive leaks as abort. Business-sensitive leaks are commission rates and partner-status claims (`src/patterns/business.ts`). Placeholders, markdown artifacts and price-commitment language are observe.
 
-Callers add patterns through the factory (`createStreamingGuard`). Custom patterns are appended after the built-ins, which cannot be removed. The guard holds the accumulated buffer, the pattern list, an `onViolate` handler and an `onAbort` handler.
+Callers add patterns through the factory (`createStreamingGuard`). Custom patterns are appended after the built-ins. The built-ins run unless the caller turns them off or keeps only some of them with the `builtinRules` option. The guard holds the accumulated buffer, the pattern list, an `onViolate` handler and an `onAbort` handler.
 
 ### Invariants
 

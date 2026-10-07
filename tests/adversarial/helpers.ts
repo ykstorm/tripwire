@@ -5,6 +5,7 @@ export function makeConfig(overrides: Partial<ProxyConfig> = {}): ProxyConfig {
   return {
     upstreamUrl: 'https://api.openai.com/v1',
     customPatterns: [],
+    builtinRules: true,
     holdback: 48,
     maxStreamMs: 120_000,
     maxStreamChars: 200_000,

@@ -108,3 +108,44 @@ describe('hold-back buffer (cross-chunk leak prevention)', () => {
     expect(out).toBe('all good')
   })
 })
+
+describe('hold-back with the built-in rules off', () => {
+  // The hold-back is its own option. It is not worked out from the rules that
+  // run, so turning the built-ins off neither shortens nor lengthens it.
+  const chunks = ['The flat is ', 'on the third floor ', 'of a quiet building ', 'near the metro station, ', 'with parking.']
+
+  function releasedPerChunk(options: ConstructorParameters<typeof StreamingGuard>[0]): string[] {
+    const g = new StreamingGuard(options)
+    return [...chunks.map((c) => g.onChunk(c)), g.flush()]
+  }
+
+  it('releases exactly what the default guard releases, chunk by chunk, at the default and at a custom hold-back', () => {
+    for (const holdback of [undefined, 7]) {
+      expect(releasedPerChunk({ builtinRules: false, holdback })).toEqual(releasedPerChunk({ holdback }))
+    }
+  })
+
+  it('still withholds the last 48 characters by default and hands them back on flush', () => {
+    const g = new StreamingGuard({ builtinRules: false })
+    const out = g.onChunk('x'.repeat(100))
+    expect(out).toHaveLength(52)
+    expect(g.flush()).toHaveLength(48)
+  })
+
+  it('keeps a caller rule split across chunks from releasing its first half when the hold-back covers the match', () => {
+    const rule = { pattern: /launch-codes/i, label: 'LAUNCH', mode: 'abort' as const }
+    // "launch-codes" is 12 characters, so 11 of them can arrive before the match completes.
+    const g = new StreamingGuard({ builtinRules: false, patterns: [rule], holdback: 11 })
+    let delivered = ''
+    let caught: unknown
+    try {
+      for (const c of ['say ', 'launch-', 'codes']) delivered += g.onChunk(c)
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(GuardAbortError)
+    expect((caught as GuardAbortError).rule).toBe('LAUNCH')
+    expect(delivered).toBe('')
+    expect(g.flush()).toBe('')
+  })
+})

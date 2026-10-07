@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.1.0 - unreleased
+
+### Added
+- `builtinRules` option on `createStreamingGuard` and `StreamingGuard`, to
+  choose which built-in rules run. `true` (the default) runs all of them, as
+  before. `false` runs only the caller's `patterns`. An array of labels, such as
+  `['SECRET_LEAK']`, keeps just the built-in rules with those labels. A label
+  that is not one of the seven built-in labels throws when the guard is built,
+  and the message lists the valid ones. This lets a caller whose own rules cover
+  the same ground switch off a built-in that matches ordinary text, such as the
+  phone rule matching the rupee range 65000-75000.
+- `BUILTIN_RULE_LABELS` and the `BuiltinRuleLabel` type: the labels a caller can
+  name in `builtinRules`.
+- Proxy: `TRIPWIRE_BUILTIN_RULES` sets the same choice for every guard. It is
+  `all` (the default), `none`, or a comma list of labels. An unknown label, an
+  empty entry, or `all` or `none` mixed with labels stops the boot, and the
+  error lists the valid labels.
+
+`holdback` is unchanged and does not follow the rule set, so it stays 48 when the
+built-in rules are off. `checkResponse` has its own fixed rule table and takes
+no `builtinRules` option.
+
 ## 2.0.0 - unreleased
 
 Four changes break the 1.1.0 API. The `windowSize` option is gone, and

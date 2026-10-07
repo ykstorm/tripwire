@@ -194,7 +194,12 @@ function createScanState(config: ProxyConfig): ScanState {
     logSoft(violation)
   }
   const makeGuard = (): StreamingGuard =>
-    createStreamingGuard({ holdback: config.holdback, patterns: config.customPatterns, onViolate })
+    createStreamingGuard({
+      holdback: config.holdback,
+      patterns: config.customPatterns,
+      builtinRules: config.builtinRules,
+      onViolate,
+    })
   const guardFor = (map: Map<number, StreamingGuard>, index: number): StreamingGuard => {
     let g = map.get(index)
     if (!g) {
