@@ -5,11 +5,13 @@
 // so a bad config stops the process at startup instead of surfacing mid-request.
 
 import { createContext, Script } from 'vm'
-import type { CustomPattern } from '../streaming/index.js'
+import { BUILTIN_RULE_LABELS, type BuiltinRuleLabel, type CustomPattern } from '../streaming/index.js'
 
 export interface ProxyConfig {
   upstreamUrl: string
   customPatterns: CustomPattern[]
+  /** Which built-in rules run: all of them, none, or just the listed labels. */
+  builtinRules: boolean | BuiltinRuleLabel[]
   holdback: number
   maxStreamMs: number
   maxStreamChars: number
@@ -328,6 +330,34 @@ export function parseCustomPatterns(raw: string | undefined): CustomPattern[] {
   })
 }
 
+/**
+ * TRIPWIRE_BUILTIN_RULES: `all` (or unset) keeps every built-in rule, `none`
+ * runs only the custom patterns, and a comma list of labels keeps just those.
+ * `all` and `none` are case-insensitive; labels must match exactly. Anything
+ * else stops the boot, and so does an empty entry such as the one after a
+ * trailing comma: the safe reading of a slip is to refuse it, not to run
+ * with fewer rules than the operator meant.
+ */
+export function parseBuiltinRules(raw: string | undefined): boolean | BuiltinRuleLabel[] {
+  if (raw === undefined || raw.trim() === '') return true
+  const word = raw.trim().toLowerCase()
+  if (word === 'all') return true
+  if (word === 'none') return false
+  const valid = BUILTIN_RULE_LABELS as readonly string[]
+  const labels = raw.split(',').map((label) => label.trim())
+  for (const label of labels) {
+    if (label === '') {
+      throw new ConfigError(`TRIPWIRE_BUILTIN_RULES has an empty entry in ${JSON.stringify(raw)}`)
+    }
+    if (!valid.includes(label)) {
+      throw new ConfigError(
+        `TRIPWIRE_BUILTIN_RULES has unknown rule label ${JSON.stringify(label)} (valid labels: ${valid.join(', ')}; or "all" or "none" on its own)`
+      )
+    }
+  }
+  return [...new Set(labels)] as BuiltinRuleLabel[]
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   const upstreamUrl = validateUpstreamUrl(
     env.TRIPWIRE_UPSTREAM_URL ?? 'https://api.openai.com/v1',
@@ -340,6 +370,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   return {
     upstreamUrl,
     customPatterns: parseCustomPatterns(env.TRIPWIRE_CUSTOM_PATTERNS),
+    builtinRules: parseBuiltinRules(env.TRIPWIRE_BUILTIN_RULES),
     holdback: envInt('TRIPWIRE_HOLDBACK', env.TRIPWIRE_HOLDBACK, 48),
     maxStreamMs: envInt('TRIPWIRE_MAX_STREAM_MS', env.TRIPWIRE_MAX_STREAM_MS, 120_000),
     maxStreamChars: envInt('TRIPWIRE_MAX_STREAM_CHARS', env.TRIPWIRE_MAX_STREAM_CHARS, 200_000),

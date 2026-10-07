@@ -92,7 +92,7 @@ The app still sends its own key as the Bearer token. The sidecar guards the stre
 
 ## Configuration reference
 
-All config is read once at boot. An invalid upstream URL or a bad custom pattern stops the process with a non-zero exit instead of failing mid-request.
+All config is read once at boot. An invalid upstream URL, a bad custom pattern or an unknown built-in rule label stops the process with a non-zero exit instead of failing mid-request.
 
 | Var | Default | Description |
 |---|---|---|
@@ -102,6 +102,7 @@ All config is read once at boot. An invalid upstream URL or a bad custom pattern
 | `TRIPWIRE_ALLOW_PRIVATE_UPSTREAM` | `0` | Allow a private / loopback / link-local upstream host |
 | `TRIPWIRE_PROXY_TOKEN` | none | If set, callers must send it as `X-Tripwire-Token` (timing-safe compared). A warning is logged if unset. |
 | `TRIPWIRE_CUSTOM_PATTERNS` | none | JSON array of `{ source, flags, label, mode }`. Validated at boot and screened for ReDoS. ReDoS (regular expression denial of service) is when one crafted input makes a regex run so long that it freezes the process. |
+| `TRIPWIRE_BUILTIN_RULES` | `all` | Which built-in rules run: `all`, `none` (only `TRIPWIRE_CUSTOM_PATTERNS` run), or a comma list of labels to keep, such as `SECRET_LEAK,CONTACT_LEAK`. The labels are `SECRET_LEAK`, `CONTACT_LEAK`, `BUSINESS_LEAK`, `PRICE_COMMITMENT_LEAK`, `COMMISSION_DISCUSSION_LEAK`, `NO_MARKDOWN` and `PLACEHOLDER_LEAK`. An unknown label stops the boot, and the error lists the valid ones. With `none` and no custom patterns, nothing is checked. It does not change `TRIPWIRE_HOLDBACK`. |
 | `TRIPWIRE_HOLDBACK` | `48` | The hold-back: how many trailing characters the guard withholds until following context arrives, so a match split across chunks is still caught |
 | `TRIPWIRE_MAX_STREAM_MS` | `120000` | Per-stream time cap before the upstream is aborted |
 | `TRIPWIRE_MAX_STREAM_CHARS` | `200000` | Per-stream content cap (`stream_too_large` past it) |

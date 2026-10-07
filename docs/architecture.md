@@ -28,6 +28,12 @@ The rules run on a bounded window, but per-chunk cost still grows on long stream
 
 Matching runs on normalized text, so unicode evasions (zero-width splits, non-ASCII digits, dash look-alikes) are folded away first (`src/normalize.ts`). A zero-width character, such as a zero-width space, takes no space on screen. Format characters like it are left out when the window and the hold-back are counted, so padding cannot push part of a match out.
 
+### Which rules run
+
+Each guard runs the built-in rules, then the caller's `patterns`. The `builtinRules` option narrows the first group: `true` (the default) keeps them all, `false` drops them, and a list of labels such as `['SECRET_LEAK']` keeps only the rules with those labels. An unknown label throws when the guard is built. The built-in rules are listed in `BUILTIN_RULES` in `src/streaming/index.ts`, and their labels are exported as `BUILTIN_RULE_LABELS`.
+
+The hold-back does not depend on which rules run. It is the `holdback` option, a fixed number of characters, so the same text is released at the same pace with the built-ins on or off. A caller whose own patterns can match a long string has to set it high enough, at least one less than the longest match.
+
 ### Why the hold-back matters
 
 Without it, a violation split across chunks would have its safe-looking prefix released before the full pattern became visible. The hold-back is the cost of catching cross-chunk leaks: delivered output lags by the hold-back length.
@@ -37,6 +43,8 @@ Without it, a violation split across chunks would have its safe-looking prefix r
 Post-hoc means after the response is complete. `checkResponse` (`src/check/`) runs the content rules (not the secret-key pattern) plus the Homesty-specific rules (hallucination, card discipline, language match, price/commission locks) against a completed response. It returns `{ passed, violations }` without throwing.
 
 It is a thin loop over a rule table. A context is built once (`src/check/shared.ts`). Each rule in `src/check/rules/` is a small pure function. It rejects input over `MAX_CHECK_CHARS` (100k) with `InputTooLargeError`.
+
+The audit does not share the guard's rule assembly. Its table is fixed, its rules are functions and not labelled patterns, and it takes no custom patterns, so `builtinRules` does not apply to it.
 
 ## Proxy
 
@@ -65,6 +73,7 @@ The app disables `x-powered-by`, rate-limits per IP (429 + `Retry-After`), and c
 `loadConfig` (`src/proxy/config.ts`) parses the environment once and fails fast:
 
 - The upstream URL must be a valid `https` URL (http only with `TRIPWIRE_ALLOW_INSECURE_UPSTREAM`). Private, loopback, link-local and metadata addresses are rejected unless `TRIPWIRE_ALLOW_PRIVATE_UPSTREAM` is set. This is the SSRF guard. SSRF (server-side request forgery) is when an attacker tricks a server into calling an address it should not, such as an internal one.
+- `TRIPWIRE_BUILTIN_RULES` is parsed into the `builtinRules` option that every guard gets: `all` (or unset), `none`, or a comma list of labels. A label that is not one of `BUILTIN_RULE_LABELS`, an empty entry in the list, or `all` or `none` mixed with labels stops the process at boot, and the error lists the valid labels.
 - Custom patterns are parsed from `TRIPWIRE_CUSTOM_PATTERNS`. Invalid JSON, a disallowed flag, a nested quantifier (star height > 1, meaning one repeat inside another, as in `(a+)+`) or a pattern that is slow on an adversarial probe (long runs of letters, digits or spaces) all stop the process at boot, rather than surfacing mid-request. Each probe runs in a `vm` context with a 200 ms timeout. So a pattern such as `(a|a)+$` that would never finish fails the boot instead of hanging it.
 
 See [DEPLOY.md](../DEPLOY.md) for the full environment reference.
