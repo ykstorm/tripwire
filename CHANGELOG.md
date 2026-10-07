@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 2.1.0 - unreleased
+## 2.1.0 - 2026-10-08
 
 ### Added
 - `builtinRules` option on `createStreamingGuard` and `StreamingGuard`, to
@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 built-in rules are off. `checkResponse` has its own fixed rule table and takes
 no `builtinRules` option.
 
-## 2.0.0 - unreleased
+## 2.0.0 - 2026-10-07
 
 Four changes break the 1.1.0 API. The `windowSize` option is gone, and
 `holdback`, the number of trailing characters the guard withholds, replaces it.
