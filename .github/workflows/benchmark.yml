@@ -10,8 +10,8 @@ jobs:
   per-chunk:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
       - run: npm ci
@@ -20,7 +20,7 @@ jobs:
         run: node bench/per-chunk.mjs | tee bench/current.txt
       - name: Fail on >3x regression over the committed baseline
         run: node bench/check-regression.mjs bench/results.txt bench/current.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         # The numbers matter most when the regression gate fails.
         if: always()
         with:
