@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.1.1 - 2026-10-08
+
+### Added
+- Proxy: when it starts with the built-in rules off (`TRIPWIRE_BUILTIN_RULES=none`)
+  and no custom pattern set, it now prints one warning line on stderr. The line
+  names `TRIPWIRE_BUILTIN_RULES` and `TRIPWIRE_CUSTOM_PATTERNS` and says no rule
+  is active. Before, the proxy started and checked nothing without saying so.
+  It still starts, and nothing else about its behaviour changed.
+
 ## 2.1.0 - 2026-10-08
 
 ### Added

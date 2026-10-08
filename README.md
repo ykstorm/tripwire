@@ -149,7 +149,7 @@ The proxy behaves like this:
 - `429` with `Retry-After` when the per-IP rate limit is exceeded. `503` when the global concurrency cap is reached.
 - Benign prompts stream through and end with `data: [DONE]`.
 - Extra abort and observe rules come from `TRIPWIRE_CUSTOM_PATTERNS`, a JSON array of `{ "source", "flags", "label", "mode" }`. They are validated and screened at boot.
-- `TRIPWIRE_BUILTIN_RULES` chooses which built-in rules run: `all` (the default), `none` (only the custom patterns run), or a comma list of labels to keep, such as `SECRET_LEAK,CONTACT_LEAK`. An unknown label stops the boot, and the error lists the valid ones.
+- `TRIPWIRE_BUILTIN_RULES` chooses which built-in rules run: `all` (the default), `none` (only the custom patterns run), or a comma list of labels to keep, such as `SECRET_LEAK,CONTACT_LEAK`. An unknown label stops the boot, and the error lists the valid ones. With `none` and no `TRIPWIRE_CUSTOM_PATTERNS`, the proxy still starts but prints one warning line on stderr saying that no rule is active.
 
 See [DEPLOY.md](./DEPLOY.md) for the container setup and the full environment reference.
 
