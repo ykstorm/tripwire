@@ -1,6 +1,6 @@
 {
   "name": "@ykstormsorg/tripwire",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Regex guardrails for streaming LLM output: abort on a rule match mid-stream, plus a post-hoc audit mode.",
   "license": "Apache-2.0",
   "repository": "github:ykstorm/tripwire",

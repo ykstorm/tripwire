@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { once } from 'events'
 import request from 'supertest'
 import { createProxyServer } from '../../src/proxy/server.js'
 import { loadConfig, parseBuiltinRules, ConfigError } from '../../src/proxy/config.js'
+import { noRuleWarning, startProxy } from '../../src/proxy/start.js'
 import { BUILTIN_RULE_LABELS } from '../../src/streaming/index.js'
 import type { UpstreamChunk } from '../../src/proxy/handlers/chat.js'
 import { mockUpstream, contentChunk, parseSSE, AUTH, BODY } from '../adversarial/helpers.js'
@@ -116,5 +118,93 @@ describe('TRIPWIRE_BUILTIN_RULES in the proxy', () => {
     expect(text).toContain('98765')
     expect(text).toContain('43210')
     expect(text).toContain('data: [DONE]')
+  })
+})
+
+describe('the warning when no rule is active', () => {
+  const warnFor = (vars: Record<string, string>): string | undefined => noRuleWarning(loadConfig(env(vars)))
+
+  it('fires when the built-in rules are off and no custom pattern is set', () => {
+    const line = warnFor({ TRIPWIRE_BUILTIN_RULES: 'none' })
+    expect(line).toBeDefined()
+    expect(line).toContain('no rule is active')
+    expect(line).toContain('TRIPWIRE_BUILTIN_RULES')
+    expect(line).toContain('TRIPWIRE_CUSTOM_PATTERNS')
+    expect(line).not.toContain('\n')
+  })
+
+  it('fires for an empty custom pattern list, and for an empty label list from the library option', () => {
+    expect(warnFor({ TRIPWIRE_BUILTIN_RULES: 'none', TRIPWIRE_CUSTOM_PATTERNS: '[]' })).toBeDefined()
+    expect(noRuleWarning({ builtinRules: false, customPatterns: [] })).toBeDefined()
+    expect(noRuleWarning({ builtinRules: [], customPatterns: [] })).toBeDefined()
+  })
+
+  it('stays quiet when a custom pattern is set, even with the built-in rules off', () => {
+    expect(warnFor({ TRIPWIRE_BUILTIN_RULES: 'none', TRIPWIRE_CUSTOM_PATTERNS: LAUNCH_RULE })).toBeUndefined()
+    const mine = loadConfig(env({ TRIPWIRE_CUSTOM_PATTERNS: LAUNCH_RULE })).customPatterns
+    expect(noRuleWarning({ builtinRules: false, customPatterns: mine })).toBeUndefined()
+    expect(noRuleWarning({ builtinRules: [], customPatterns: mine })).toBeUndefined()
+  })
+
+  it('stays quiet while any built-in rule is on', () => {
+    expect(warnFor({})).toBeUndefined()
+    expect(warnFor({ TRIPWIRE_BUILTIN_RULES: 'all' })).toBeUndefined()
+    expect(warnFor({ TRIPWIRE_BUILTIN_RULES: 'SECRET_LEAK' })).toBeUndefined()
+    // An empty value means "all", as before, so the rules are active.
+    expect(warnFor({ TRIPWIRE_BUILTIN_RULES: '' })).toBeUndefined()
+  })
+})
+
+describe('proxy start with no rule active', () => {
+  const KEYS = ['PORT', 'TRIPWIRE_BUILTIN_RULES', 'TRIPWIRE_CUSTOM_PATTERNS', 'TRIPWIRE_PROXY_TOKEN']
+  const saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]))
+  const sigtermBefore = process.listeners('SIGTERM')
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k]
+      else process.env[k] = saved[k]
+    }
+    for (const l of process.listeners('SIGTERM')) {
+      if (!sigtermBefore.includes(l)) process.removeListener('SIGTERM', l)
+    }
+  })
+
+  /** Boot the real startProxy on a free port and return the stderr warning lines it printed. */
+  async function boot(vars: Record<string, string>): Promise<{ warnings: string[]; listening: boolean }> {
+    for (const k of KEYS) delete process.env[k]
+    Object.assign(process.env, { PORT: '0', TRIPWIRE_PROXY_TOKEN: 'a-test-token' }, vars)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const server = startProxy()
+    await once(server, 'listening')
+    const listening = server.listening
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve())
+      server.closeAllConnections?.()
+    })
+    return { warnings: warn.mock.calls.map((args) => String(args[0])), listening }
+  }
+
+  it('prints one line naming both settings, and still starts', async () => {
+    const { warnings, listening } = await boot({ TRIPWIRE_BUILTIN_RULES: 'none' })
+    const lines = warnings.filter((w) => w.includes('no rule is active'))
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('TRIPWIRE_BUILTIN_RULES')
+    expect(lines[0]).toContain('TRIPWIRE_CUSTOM_PATTERNS')
+    expect(lines[0]).not.toContain('\n')
+    expect(listening).toBe(true)
+  })
+
+  it('prints no such line when a custom pattern is configured', async () => {
+    const { warnings, listening } = await boot({ TRIPWIRE_BUILTIN_RULES: 'none', TRIPWIRE_CUSTOM_PATTERNS: LAUNCH_RULE })
+    expect(warnings.filter((w) => w.includes('no rule is active'))).toEqual([])
+    expect(listening).toBe(true)
+  })
+
+  it('prints no such line with the default rules', async () => {
+    const { warnings } = await boot({})
+    expect(warnings.filter((w) => w.includes('no rule is active'))).toEqual([])
   })
 })

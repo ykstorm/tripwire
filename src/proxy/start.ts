@@ -1,13 +1,13 @@
 // Shared boot path for the daemon and the CLI entrypoint.
 //
 // Loads config fail-fast (a bad upstream URL or a catastrophic custom pattern
-// stops the process here, not mid-request), warns if the proxy is unauthenticated,
-// sets conservative socket timeouts against slow-client attacks, and drains
-// open streams on SIGTERM instead of cutting them off.
+// stops the process here, not mid-request), warns if the proxy is unauthenticated
+// or has no rule active, sets conservative socket timeouts against slow-client
+// attacks, and drains open streams on SIGTERM instead of cutting them off.
 
 import type { Server } from 'http'
 import { createProxyServer } from './server.js'
-import { loadConfig, ConfigError } from './config.js'
+import { loadConfig, ConfigError, type ProxyConfig } from './config.js'
 
 interface ShutdownOptions {
   /** How long open streams get to finish before they are closed. */
@@ -53,6 +53,19 @@ export function makeShutdownHandler(server: Server, options: ShutdownOptions): (
   }
 }
 
+/**
+ * The warning for a proxy that would check nothing: the built-in rules are off
+ * (`TRIPWIRE_BUILTIN_RULES=none`, or an empty label list) and no custom pattern
+ * is set. Returns undefined when at least one rule is active. The proxy still
+ * starts in that case; the line only makes the setup visible in the logs.
+ */
+export function noRuleWarning(config: Pick<ProxyConfig, 'builtinRules' | 'customPatterns'>): string | undefined {
+  const { builtinRules, customPatterns } = config
+  const builtinsOff = builtinRules === false || (Array.isArray(builtinRules) && builtinRules.length === 0)
+  if (!builtinsOff || customPatterns.length > 0) return undefined
+  return '[tripwire] no rule is active: TRIPWIRE_BUILTIN_RULES turns off every built-in rule and TRIPWIRE_CUSTOM_PATTERNS sets none, so replies are forwarded unchecked'
+}
+
 export function startProxy(): Server {
   let config
   try {
@@ -70,6 +83,9 @@ export function startProxy(): Server {
       '[tripwire] TRIPWIRE_PROXY_TOKEN is not set - anyone who can reach this port can use the proxy'
     )
   }
+
+  const noRule = noRuleWarning(config)
+  if (noRule) console.warn(noRule)
 
   const port = parseInt(process.env.PORT ?? '8080', 10)
   if (!Number.isInteger(port) || port < 0 || port > 65535) {

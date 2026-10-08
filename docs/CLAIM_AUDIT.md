@@ -3,7 +3,7 @@
 Every public claim about Tripwire maps to the file that implements it and the
 test that proves it. If a row cannot be filled, the claim does not ship. References
 are by file rather than line so they do not rot. The test suite is the source of
-truth (134 tests across 14 files, run with `npm test`).
+truth (141 tests across 14 files, run with `npm test`).
 
 Terms used in the tables. The hold-back is the tail of the stream that the guard
 keeps until later text rules out a match split across chunks. A delta is the small
@@ -47,6 +47,7 @@ address it should not.
 | Upstream URL is pinned; SSRF addresses rejected at boot | `src/proxy/config.ts` | `tests/adversarial/ssrf.test.ts` |
 | Custom patterns fail fast on bad JSON / flags / ReDoS shape | `src/proxy/config.ts` | `tests/adversarial/redos.test.ts` |
 | `TRIPWIRE_BUILTIN_RULES` (`all`, `none` or a label list) reaches the content and tool-call guards; a bad value fails the boot | `src/proxy/config.ts`, `src/proxy/handlers/chat.ts` | `tests/proxy/builtin-rules.test.ts` |
+| With the built-in rules off and no custom pattern, the proxy prints one stderr warning at start and still starts | `src/proxy/start.ts` | `tests/proxy/builtin-rules.test.ts` |
 | Secrets redacted from logs; client sees only `{error, upstream_status}` | `src/proxy/lib/redact.ts`, `src/proxy/handlers/chat.ts` | `tests/adversarial/redaction.test.ts` |
 | `x-powered-by` disabled | `src/proxy/server.ts` | `tests/adversarial/redaction.test.ts` |
 | Per-IP rate limit (429) and global concurrency cap (503) | `src/proxy/server.ts` | `tests/adversarial/rate-limit.test.ts` |
