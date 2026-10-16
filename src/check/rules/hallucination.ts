@@ -1,4 +1,4 @@
-import { KNOWN_AREAS, KNOWN_AMENITIES, PROPERTY_KEYWORDS, type Rule } from '../shared.js'
+import { KNOWN_AREAS, KNOWN_AMENITIES, PROPERTY_KEYWORDS, type Rule, type RuleContext } from '../shared.js'
 
 const CTA_INTENTS = new Set(['comparison_query', 'visit_query', 'builder_query'])
 
@@ -15,18 +15,29 @@ export const hallucinationRule: Rule = (ctx) => {
   return hallucinated.length > 0 ? [`HALLUCINATION: invented names - ${hallucinated.join(', ')}`] : []
 }
 
+const ANCHOR_CARD = /<!--CARD:\{[^}]*"type":"(?:project_card|cost_breakdown|visit_prompt|builder_trust|comparison)"/
+const VISIT_PROMPT_CARD = /<!--CARD:\{[^}]*"type":"visit_prompt"/
+const VISIT_WORDS = /(visit|schedule|book|tour|see the project|dikha|dekhne|ghar dekhna)/i
+const CTA_PHRASES = ['site visit', 'book a visit', 'schedule a visit', '30 seconds']
+
+function mentionsKnownProject(ctx: RuleContext): boolean {
+  return ctx.knownProjectNames.some((p) => ctx.lower.includes(p.toLowerCase()))
+}
+
+function buyerAskedToVisit(ctx: RuleContext): boolean {
+  return !!ctx.buyerMessage && VISIT_WORDS.test(ctx.buyerMessage)
+}
+
+/** A visit, comparison or builder query where the buyer asked to visit or the answer is anchored on a card. */
+function visitCtaExpected(ctx: RuleContext): boolean {
+  return CTA_INTENTS.has(ctx.classified.intent) && (buyerAskedToVisit(ctx) || ANCHOR_CARD.test(ctx.text))
+}
+
+function hasVisitCta(ctx: RuleContext): boolean {
+  return CTA_PHRASES.some((phrase) => ctx.lower.includes(phrase)) || VISIT_PROMPT_CARD.test(ctx.text)
+}
+
 export const missingCtaRule: Rule = (ctx) => {
-  const mentionsProject = ctx.knownProjectNames.some((p) => ctx.lower.includes(p.toLowerCase()))
-  const anchorCard = /<!--CARD:\{[^}]*"type":"(?:project_card|cost_breakdown|visit_prompt|builder_trust|comparison)"/.test(ctx.text)
-  const visitSignal = !!ctx.buyerMessage && /(visit|schedule|book|tour|see the project|dikha|dekhne|ghar dekhna)/i.test(ctx.buyerMessage)
-  const plausible = CTA_INTENTS.has(ctx.classified.intent) && (visitSignal || anchorCard)
-  const hasCTA =
-    ctx.lower.includes('site visit') ||
-    ctx.lower.includes('book a visit') ||
-    ctx.lower.includes('schedule a visit') ||
-    ctx.lower.includes('30 seconds') ||
-    /<!--CARD:\{[^}]*"type":"visit_prompt"/.test(ctx.text)
-  return plausible && mentionsProject && !hasCTA
-    ? ['MISSING_CTA: project-anchored response without visit CTA']
-    : []
+  const missing = visitCtaExpected(ctx) && mentionsKnownProject(ctx) && !hasVisitCta(ctx)
+  return missing ? ['MISSING_CTA: project-anchored response without visit CTA'] : []
 }

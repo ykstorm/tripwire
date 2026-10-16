@@ -50,6 +50,51 @@ describe('custom pattern loading is fail-fast', () => {
     expect(parsed).toHaveLength(1)
     expect(parsed[0].label).toBe('OK')
   })
+
+  it.each([undefined, '', '   '])('reads %j as no custom patterns', (raw) => {
+    expect(parseCustomPatterns(raw)).toEqual([])
+  })
+
+  it.each([
+    ['a JSON object instead of an array', '{"source":"a"}', /must be a JSON array/],
+    ['a null entry', '[null]', /custom pattern\[0\] needs string "source" and "label"/],
+    ['an entry without a source', '[{"label":"X","mode":"abort"}]', /custom pattern\[0\] needs string "source" and "label"/],
+    ['an entry without a label', '[{"source":"a","mode":"abort"}]', /custom pattern\[0\] needs string "source" and "label"/],
+    ['a numeric source', '[{"source":1,"label":"X","mode":"abort"}]', /custom pattern\[0\] needs string "source" and "label"/],
+    ['the index of the first bad entry', '[{"source":"a","label":"A","mode":"abort"},{"source":"b"}]', /custom pattern\[1\] needs/],
+    ['a missing mode', '[{"source":"a","label":"X"}]', /custom pattern "X" mode must be "abort" or "observe"/],
+    ['an unknown mode', '[{"source":"a","label":"X","mode":"block"}]', /custom pattern "X" mode must be "abort" or "observe"/],
+    ['a disallowed flag', '[{"source":"a","flags":"ig","label":"X","mode":"abort"}]', /custom pattern "X" has disallowed flags "ig"/],
+    ['a nested quantifier', '[{"source":"(a*)*","label":"X","mode":"abort"}]', /custom pattern "X" has nested unbounded quantifiers/],
+    ['a source that does not compile', '[{"source":"(","label":"X","mode":"abort"}]', /custom pattern "X" failed to compile/],
+    ['a repeated flag', '[{"source":"a","flags":"ii","label":"X","mode":"abort"}]', /custom pattern "X" failed to compile/],
+  ])('rejects %s with a message that names the problem', (_name, raw, message) => {
+    expect(() => parseCustomPatterns(raw)).toThrow(ConfigError)
+    expect(() => parseCustomPatterns(raw)).toThrow(message)
+  })
+
+  it('checks the mode before the flags and the flags before compiling', () => {
+    const blob = '[{"source":"(","flags":"g","label":"X","mode":"block"}]'
+    expect(() => parseCustomPatterns(blob)).toThrow(/mode must be "abort" or "observe"/)
+    const badFlags = '[{"source":"(","flags":"g","label":"X","mode":"abort"}]'
+    expect(() => parseCustomPatterns(badFlags)).toThrow(/disallowed flags "g"/)
+  })
+
+  it('defaults the flags to case-insensitive and keeps label and mode', () => {
+    const [p] = parseCustomPatterns('[{"source":"secret","label":"S","mode":"observe"}]')
+    expect(p.pattern.flags).toBe('i')
+    expect(p.pattern.source).toBe('secret')
+    expect(p.label).toBe('S')
+    expect(p.mode).toBe('observe')
+  })
+
+  it('keeps explicit flags, including none', () => {
+    const [none, multi] = parseCustomPatterns(
+      '[{"source":"a","flags":"","label":"N","mode":"abort"},{"source":"b","flags":"ms","label":"M","mode":"abort"}]'
+    )
+    expect(none.pattern.flags).toBe('')
+    expect(multi.pattern.flags).toBe('ms')
+  })
 })
 
 describe('built-in patterns are linear on adversarial input', () => {

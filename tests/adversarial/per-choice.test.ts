@@ -90,6 +90,98 @@ describe('per-choice buffering + scanning every delta field', () => {
       })
   })
 
+  describe('held aux deltas released together are folded into one delta', () => {
+    type ForwardedDelta = {
+      role?: string
+      refusal?: string
+      tool_calls?: Array<{ id?: string; function?: { arguments?: string } }>
+      function_call?: { name?: string; arguments?: string }
+    }
+    type ForwardedChoice = { delta: ForwardedDelta; finish_reason: string | null }
+
+    async function forwardedChoices(chunks: UpstreamChunk[]): Promise<ForwardedChoice[]> {
+      const app = createProxyServer({ config: makeConfig(), upstreamFactory: mockUpstream(chunks) })
+      const res = await request(app).post('/v1/chat/completions').set(AUTH).send(BODY)
+      expect(tripOf(res.text)).toBeUndefined()
+      expect(res.text).toContain('data: [DONE]')
+      const events = parseSSE(res.text) as Array<{ choices?: ForwardedChoice[] }>
+      return events.flatMap((e) => e.choices ?? [])
+    }
+
+    const finish = (reason: string): UpstreamChunk => ({ choices: [{ index: 0, delta: {}, finish_reason: reason }] })
+
+    it('concatenates refusal text', async () => {
+      const choices = await forwardedChoices([
+        { choices: [{ index: 0, delta: { role: 'assistant', refusal: 'I cannot ' } }] },
+        { choices: [{ index: 0, delta: { refusal: 'help with that.' } }] },
+        finish('stop'),
+      ])
+      expect(choices).toEqual([
+        { index: 0, delta: { role: 'assistant' }, finish_reason: null },
+        { index: 0, delta: { refusal: 'I cannot help with that.' }, finish_reason: 'stop' },
+      ])
+    })
+
+    it('keeps the function_call name from the first delta and concatenates its arguments', async () => {
+      const choices = await forwardedChoices([
+        { choices: [{ index: 0, delta: { role: 'assistant', function_call: { name: 'lookup', arguments: '{"city":' } } }] },
+        { choices: [{ index: 0, delta: { function_call: { arguments: '"Mumbai"}' } } }] },
+        finish('function_call'),
+      ])
+      expect(choices).toEqual([
+        { index: 0, delta: { role: 'assistant' }, finish_reason: null },
+        {
+          index: 0,
+          delta: { function_call: { name: 'lookup', arguments: '{"city":"Mumbai"}' } },
+          finish_reason: 'function_call',
+        },
+      ])
+    })
+
+    it('lets a later function_call name replace an earlier one', async () => {
+      const choices = await forwardedChoices([
+        { choices: [{ index: 0, delta: { function_call: { name: 'first', arguments: '{' } } }] },
+        { choices: [{ index: 0, delta: { function_call: { name: 'second', arguments: '}' } } }] },
+        finish('function_call'),
+      ])
+      expect(choices).toEqual([
+        { index: 0, delta: { function_call: { name: 'second', arguments: '{}' } }, finish_reason: 'function_call' },
+      ])
+    })
+
+    it('gives a function_call with no arguments an empty arguments string when it rides with a refusal', async () => {
+      const choices = await forwardedChoices([
+        { choices: [{ index: 0, delta: { refusal: 'No.', function_call: { name: 'lookup' } } }] },
+        finish('stop'),
+      ])
+      expect(choices).toEqual([
+        { index: 0, delta: { refusal: 'No.', function_call: { name: 'lookup', arguments: '' } }, finish_reason: 'stop' },
+      ])
+    })
+
+    it('appends tool_calls and refusal from separate deltas into the same folded delta', async () => {
+      const choices = await forwardedChoices([
+        { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', function: { arguments: '{}' } }] } }] },
+        { choices: [{ index: 0, delta: { refusal: 'Partly.' } }] },
+        { choices: [{ index: 0, delta: { tool_calls: [{ index: 1, id: 'call_2', function: { arguments: '[]' } }] } }] },
+        finish('tool_calls'),
+      ])
+      expect(choices).toEqual([
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              { index: 0, id: 'call_1', function: { arguments: '{}' } },
+              { index: 1, id: 'call_2', function: { arguments: '[]' } },
+            ],
+            refusal: 'Partly.',
+          },
+          finish_reason: 'tool_calls',
+        },
+      ])
+    })
+  })
+
   it('rejects n > 1 with 400', () => {
     const app = createProxyServer({ config: makeConfig(), upstreamFactory: mockUpstream([]) })
     return request(app)

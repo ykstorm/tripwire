@@ -272,14 +272,19 @@ function mergeAux(target: Delta, parts: Delta[]): void {
   for (const part of parts) {
     if (part.tool_calls) target.tool_calls = [...(target.tool_calls ?? []), ...part.tool_calls]
     if (part.refusal !== undefined) target.refusal = (target.refusal ?? '') + part.refusal
-    if (part.function_call) {
-      const prev = target.function_call ?? {}
-      target.function_call = {
-        ...prev,
-        ...(part.function_call.name !== undefined ? { name: part.function_call.name } : {}),
-        arguments: (prev.arguments ?? '') + (part.function_call.arguments ?? ''),
-      }
-    }
+    if (part.function_call) target.function_call = mergeFunctionCall(target.function_call, part.function_call)
+  }
+}
+
+type FunctionCallDelta = NonNullable<Delta['function_call']>
+
+/** Arguments concatenate; a name, when the next delta carries one, replaces the earlier name. */
+function mergeFunctionCall(earlier: FunctionCallDelta | undefined, next: FunctionCallDelta): FunctionCallDelta {
+  const prev = earlier ?? {}
+  return {
+    ...prev,
+    ...(next.name !== undefined ? { name: next.name } : {}),
+    arguments: (prev.arguments ?? '') + (next.arguments ?? ''),
   }
 }
 
