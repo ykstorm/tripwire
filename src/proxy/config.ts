@@ -72,34 +72,61 @@ function ipv4Parts(host: string): number[] | null {
   return parts
 }
 
+/**
+ * Private IPv4 blocks, each as its first octet and the inclusive range its
+ * second octet must fall in. Every block is a /16 or wider, so the first two
+ * octets are enough to place an address.
+ */
+const PRIVATE_IPV4_BLOCKS: ReadonlyArray<{ first: number; secondFrom: number; secondTo: number }> = [
+  { first: 10, secondFrom: 0, secondTo: 255 }, // 10/8
+  { first: 127, secondFrom: 0, secondTo: 255 }, // loopback
+  { first: 0, secondFrom: 0, secondTo: 255 }, // "this host"
+  { first: 169, secondFrom: 254, secondTo: 254 }, // link-local incl. 169.254.169.254 metadata
+  { first: 172, secondFrom: 16, secondTo: 31 }, // 172.16/12
+  { first: 192, secondFrom: 168, secondTo: 168 }, // 192.168/16
+  { first: 100, secondFrom: 64, secondTo: 127 }, // CGNAT 100.64/10
+]
+
 function isPrivateIPv4(parts: number[]): boolean {
   const [a, b] = parts
-  if (a === 10) return true
-  if (a === 127) return true // loopback
-  if (a === 0) return true // "this host"
-  if (a === 169 && b === 254) return true // link-local incl. 169.254.169.254 metadata
-  if (a === 172 && b >= 16 && b <= 31) return true
-  if (a === 192 && b === 168) return true
-  if (a === 100 && b >= 64 && b <= 127) return true // CGNAT
-  return false
+  return PRIVATE_IPV4_BLOCKS.some((block) => a === block.first && b >= block.secondFrom && b <= block.secondTo)
+}
+
+/** Private IPv6 prefixes, as a mask over the first 16-bit group and the value the masked group must equal. */
+const PRIVATE_IPV6_PREFIXES: ReadonlyArray<{ mask: number; value: number }> = [
+  { mask: 0xffc0, value: 0xfe80 }, // link-local fe80::/10
+  { mask: 0xfe00, value: 0xfc00 }, // unique local fc00::/7
+]
+
+const IPV6_LOOPBACK_AND_UNSPECIFIED = new Set(['::1', '::'])
+
+/** Brackets off, lower case, and no trailing dot: `localhost.` is the same DNS name as `localhost`. */
+function normalizeHost(hostname: string): string {
+  return hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.+$/, '')
+}
+
+function isLocalhostName(host: string): boolean {
+  return host === 'localhost' || host.endsWith('.localhost')
+}
+
+/** Expects an IPv6 literal without brackets. */
+function isPrivateIPv6(host: string): boolean {
+  if (IPV6_LOOPBACK_AND_UNSPECIFIED.has(host)) return true
+  const mapped = mappedIPv4(host)
+  if (mapped) return isPrivateIPv4(mapped)
+  const first = parseInt(host.split(':')[0] || '0', 16)
+  return PRIVATE_IPV6_PREFIXES.some(({ mask, value }) => (first & mask) === value)
 }
 
 function isPrivateHost(hostname: string): boolean {
-  // A trailing dot is the same DNS name (`localhost.` is `localhost`).
-  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.+$/, '')
-  if (host === 'localhost' || host.endsWith('.localhost')) return true
+  const host = normalizeHost(hostname)
+  if (isLocalhostName(host)) return true
   const v4 = ipv4Parts(host)
   if (v4) return isPrivateIPv4(v4)
   // IPv6 literals only: a hostname never contains a colon, so names such as
   // fdic.gov or fe80.example must not trip the link-local and ULA checks.
   if (!host.includes(':')) return false
-  if (host === '::1' || host === '::') return true
-  const mapped = mappedIPv4(host)
-  if (mapped) return isPrivateIPv4(mapped)
-  const first = parseInt(host.split(':')[0] || '0', 16)
-  if ((first & 0xffc0) === 0xfe80) return true // link-local fe80::/10
-  if ((first & 0xfe00) === 0xfc00) return true // unique local fc00::/7
-  return false
+  return isPrivateIPv6(host)
 }
 
 /**
@@ -304,30 +331,47 @@ export function parseCustomPatterns(raw: string | undefined): CustomPattern[] {
   if (!Array.isArray(parsed)) {
     throw new ConfigError('TRIPWIRE_CUSTOM_PATTERNS must be a JSON array')
   }
-  return parsed.map((entry, idx) => {
-    const p = entry as RawPattern
-    if (!p || typeof p.source !== 'string' || typeof p.label !== 'string') {
-      throw new ConfigError(`custom pattern[${idx}] needs string "source" and "label"`)
-    }
-    if (p.mode !== 'abort' && p.mode !== 'observe') {
-      throw new ConfigError(`custom pattern "${p.label}" mode must be "abort" or "observe"`)
-    }
-    const flags = p.flags ?? 'i'
-    if (!FLAG_WHITELIST.test(flags)) {
-      throw new ConfigError(`custom pattern "${p.label}" has disallowed flags "${flags}" (allowed: i, m, s, u)`)
-    }
-    if (maxStarHeight(p.source) > 1) {
-      throw new ConfigError(`custom pattern "${p.label}" has nested unbounded quantifiers (star height > 1)`)
-    }
-    let compiled: RegExp
-    try {
-      compiled = new RegExp(p.source, flags)
-    } catch (err) {
-      throw new ConfigError(`custom pattern "${p.label}" failed to compile: ${(err as Error).message}`)
-    }
-    screenForRedos(compiled, p.label)
-    return { pattern: compiled, label: p.label, mode: p.mode }
-  })
+  return parsed.map((entry, idx) => toCustomPattern(entry, idx))
+}
+
+/** Validate and compile one entry of TRIPWIRE_CUSTOM_PATTERNS; the slow ReDoS probe runs last. */
+function toCustomPattern(entry: unknown, idx: number): CustomPattern {
+  const p = requirePatternShape(entry, idx)
+  const flags = allowedFlags(p)
+  const compiled = compilePattern(p, flags)
+  screenForRedos(compiled, p.label)
+  return { pattern: compiled, label: p.label, mode: p.mode }
+}
+
+function requirePatternShape(entry: unknown, idx: number): RawPattern {
+  const p = entry as RawPattern
+  if (!p || typeof p.source !== 'string' || typeof p.label !== 'string') {
+    throw new ConfigError(`custom pattern[${idx}] needs string "source" and "label"`)
+  }
+  if (p.mode !== 'abort' && p.mode !== 'observe') {
+    throw new ConfigError(`custom pattern "${p.label}" mode must be "abort" or "observe"`)
+  }
+  return p
+}
+
+/** The pattern's flags, `i` when none are given; only i, m, s and u are allowed. */
+function allowedFlags(p: RawPattern): string {
+  const flags = p.flags ?? 'i'
+  if (!FLAG_WHITELIST.test(flags)) {
+    throw new ConfigError(`custom pattern "${p.label}" has disallowed flags "${flags}" (allowed: i, m, s, u)`)
+  }
+  return flags
+}
+
+function compilePattern(p: RawPattern, flags: string): RegExp {
+  if (maxStarHeight(p.source) > 1) {
+    throw new ConfigError(`custom pattern "${p.label}" has nested unbounded quantifiers (star height > 1)`)
+  }
+  try {
+    return new RegExp(p.source, flags)
+  } catch (err) {
+    throw new ConfigError(`custom pattern "${p.label}" failed to compile: ${(err as Error).message}`)
+  }
 }
 
 /**

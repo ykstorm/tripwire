@@ -10,25 +10,52 @@ export const wordCapRule: Rule = (ctx) => {
 
 const SPECIALTY_TYPES = ['comparison', 'cost_breakdown', 'visit_prompt', 'builder_trust']
 const KNOWN_TYPES = new Set(['project_card', ...SPECIALTY_TYPES])
+const MAX_CARDS = 2
+
+type CardCounts = Record<string, number>
+
+function countCardTypes(cards: ParsedCard[]): CardCounts {
+  const counts: CardCounts = {}
+  for (const c of cards) counts[c.type] = (counts[c.type] ?? 0) + 1
+  return counts
+}
+
+function countOf(counts: CardCounts, type: string): number {
+  return counts[type] ?? 0
+}
+
+function tooManyCards(cards: ParsedCard[]): string[] {
+  if (cards.length <= MAX_CARDS) return []
+  return [`CARD_DISCIPLINE: ${cards.length} CARDs exceeds ${MAX_CARDS}-block hard limit`]
+}
+
+function duplicateSpecialtyCards(counts: CardCounts): string[] {
+  return SPECIALTY_TYPES.filter((t) => countOf(counts, t) > 1).map(
+    (t) => `CARD_DISCIPLINE: duplicate ${t} card (${counts[t]} found)`
+  )
+}
+
+function comparisonNotAlone(counts: CardCounts): string[] {
+  const together = countOf(counts, 'comparison') > 0 && countOf(counts, 'project_card') > 0
+  return together ? ['CARD_DISCIPLINE: comparison must stand alone (no project_card alongside)'] : []
+}
+
+function unknownCardTypes(counts: CardCounts): string[] {
+  return Object.keys(counts)
+    .filter((t) => !KNOWN_TYPES.has(t))
+    .map((t) => `CARD_DISCIPLINE: unknown card type(s) ${t}`)
+}
 
 export const cardDisciplineRule: Rule = (ctx) => {
   const cards: ParsedCard[] = ctx.cards
   if (cards.length === 0) return []
-  const out: string[] = []
-  if (cards.length > 2) out.push(`CARD_DISCIPLINE: ${cards.length} CARDs exceeds 2-block hard limit`)
-
-  const counts: Record<string, number> = {}
-  for (const c of cards) counts[c.type] = (counts[c.type] ?? 0) + 1
-  for (const t of SPECIALTY_TYPES) {
-    if ((counts[t] ?? 0) > 1) out.push(`CARD_DISCIPLINE: duplicate ${t} card (${counts[t]} found)`)
-  }
-  if ((counts['comparison'] ?? 0) > 0 && (counts['project_card'] ?? 0) > 0) {
-    out.push('CARD_DISCIPLINE: comparison must stand alone (no project_card alongside)')
-  }
-  for (const t of Object.keys(counts)) {
-    if (!KNOWN_TYPES.has(t)) out.push(`CARD_DISCIPLINE: unknown card type(s) ${t}`)
-  }
-  return out
+  const counts = countCardTypes(cards)
+  return [
+    ...tooManyCards(cards),
+    ...duplicateSpecialtyCards(counts),
+    ...comparisonNotAlone(counts),
+    ...unknownCardTypes(counts),
+  ]
 }
 
 export const softSellRule: Rule = (ctx) =>
